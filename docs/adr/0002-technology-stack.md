@@ -1,6 +1,6 @@
 # 0002. Technology stack and versions
 
-- Status: Proposed
+- Status: Accepted (owner approval 2026-11-23)
 - Date: 2026-11-23
 - Deciders: Owner, Claude Code
 

@@ -1,6 +1,6 @@
 # 0004. Asset graph in Postgres (nodes/edges tables)
 
-- Status: Proposed
+- Status: Accepted (owner approval 2026-11-23)
 - Date: 2026-11-23
 - Deciders: Owner, Claude Code
 

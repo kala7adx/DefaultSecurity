@@ -1,6 +1,6 @@
 # 0009. Check engine: YAML metadata + registered Python evaluators; mappings in frameworks
 
-- Status: Proposed
+- Status: Accepted (owner approval 2026-11-23)
 - Date: 2026-11-23
 - Deciders: Owner, Claude Code
 

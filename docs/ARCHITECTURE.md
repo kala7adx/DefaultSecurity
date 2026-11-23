@@ -1,6 +1,6 @@
 # Skyline — Architecture
 
-Status: **Proposed** for Phase 0 (2026-11-23). Source of intent: `docs/PRODUCT_BRIEF.md`.
+Status: **Accepted** for Phase 0 (owner approval 2026-11-23). Source of intent: `docs/PRODUCT_BRIEF.md`.
 Rules: `CLAUDE.md`, `docs/SECURE_CODING.md`. Decisions and their reasoning: `docs/adr/`.
 Threats and mitigations: `docs/THREAT_MODEL.md`. Delivery plan: `docs/ROADMAP.md`.
 
