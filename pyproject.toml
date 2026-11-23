@@ -63,6 +63,12 @@ select = [
     "ASYNC", "PL", "RUF", "C90",
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = [
+    "skyline_core", "skyline_connectors", "skyline_checks", "skyline_frameworks",
+    "skyline_api", "skyline_worker", "testsupport",
+]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
@@ -81,7 +87,7 @@ extend-immutable-calls = [
 "**/tests/**" = ["S101", "PLR2004", "S105", "S106", "PLC0415"]
 "conftest.py" = ["S101", "PLR2004", "PLC0415"]
 # Alembic migrations hold static DDL only (no input reaches these strings).
-"**/migrations/versions/*.py" = ["E501"]
+"**/migrations/versions/*.py" = ["E501", "S608"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
@@ -119,6 +125,7 @@ warn_required_dynamic_aliases = true
 # ---------------------------------------------------------------- pytest / coverage
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+pythonpath = ["."]
 testpaths = [
     "packages/core/tests",
     "packages/connectors/tests",
