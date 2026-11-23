@@ -1,6 +1,6 @@
 # 0011. Customer onboarding: Launch Stack with secure auto-registration, StackSets, single-source permissions
 
-- Status: Proposed (design in Phase 0; AWS implementation in Phase 1, other providers in their phases)
+- Status: Accepted (owner approval 2026-11-23; design in Phase 0; AWS implementation in Phase 1, other providers in their phases)
 - Date: 2026-11-23
 - Deciders: Owner, Claude Code
 

@@ -1,6 +1,6 @@
 # 0012. Skyline on AWS: reference deployment
 
-- Status: Proposed (design in Phase 0; implementation in Phase 4: Terraform 4a, CloudFormation 4b)
+- Status: Accepted (owner approval 2026-11-23; design in Phase 0; implementation in Phase 4: Terraform 4a, CloudFormation 4b)
 - Date: 2026-11-23
 - Deciders: Owner, Claude Code
 

@@ -1,6 +1,6 @@
 # 0005. Layered read-only enforcement for connectors
 
-- Status: Proposed
+- Status: Accepted (owner approval 2026-11-23)
 - Date: 2026-11-23
 - Deciders: Owner, Claude Code
 

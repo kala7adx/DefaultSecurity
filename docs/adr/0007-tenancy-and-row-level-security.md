@@ -1,6 +1,6 @@
 # 0007. Tenancy: shared schema with Postgres Row-Level Security
 
-- Status: Proposed
+- Status: Accepted (owner approval 2026-11-23)
 - Date: 2026-11-23
 - Deciders: Owner, Claude Code
 
