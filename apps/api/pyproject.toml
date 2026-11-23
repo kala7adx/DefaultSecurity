@@ -1,0 +1,23 @@
+[project]
+name = "skyline-api"
+version = "0.1.0"
+description = "Skyline REST API"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "fastapi>=0.120",
+    "skyline-connectors",
+    "skyline-core",
+    "uvicorn>=0.38",
+]
+
+[project.scripts]
+skyline-api = "skyline_api.__main__:main"
+
+[tool.uv.sources]
+skyline-core = { workspace = true }
+skyline-connectors = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"

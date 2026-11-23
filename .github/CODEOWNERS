@@ -1,0 +1,7 @@
+# Security-sensitive paths need the owner's review (ADR-0010).
+*                         @kala7adx
+/.github/                 @kala7adx
+/deploy/                  @kala7adx
+/packages/connectors/     @kala7adx
+/packages/core/           @kala7adx
+/apps/api/src/skyline_api/auth/ @kala7adx

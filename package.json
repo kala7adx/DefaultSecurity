@@ -1,0 +1,9 @@
+{
+  "name": "skyline-workspace",
+  "private": true,
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,52 @@
+# Pre-commit hooks (docs/SECURE_CODING.md §3). Remote hooks are frozen to commit SHAs.
+# Python tools run from the locked uv environment so their versions match CI exactly.
+minimum_pre_commit_version: "4.0.0"
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+        exclude: ^deploy/helm/.*/templates/
+      - id: check-json
+        exclude: ^apps/web/tsconfig\.json$
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 2ca41cc1372d1e939a6a879f18cdc19fc1cac1ce  # frozen: v8.30.0
+    hooks:
+      - id: gitleaks-docker
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --locked ruff check --fix --exit-non-zero-on-fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --locked ruff format
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run --locked mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: web-lint
+        name: web eslint + prettier
+        entry: pnpm --dir apps/web run lint
+        language: system
+        files: ^apps/web/
+        pass_filenames: false

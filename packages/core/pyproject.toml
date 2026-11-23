@@ -1,0 +1,20 @@
+[project]
+name = "skyline-core"
+version = "0.1.0"
+description = "Skyline core: settings, logging and redaction, database, tenancy, crypto, audit, job queue"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "alembic>=1.17",
+    "argon2-cffi>=25.1",
+    "asyncpg>=0.30",
+    "cryptography>=46.0",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.11",
+    "sqlalchemy[asyncio]>=2.0.44",
+    "structlog>=25.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
