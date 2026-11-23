@@ -1,0 +1,27 @@
+[project]
+name = "skyline-worker"
+version = "0.1.0"
+description = "Skyline worker: scheduler, job runner, scan pipeline, migrations CLI"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "skyline-checks",
+    "skyline-connectors",
+    "skyline-core",
+    "skyline-frameworks",
+]
+
+[project.scripts]
+skyline-worker = "skyline_worker.__main__:main"
+skyline-migrate = "skyline_worker.migrate:main"
+skyline-secrets-init = "skyline_worker.secrets_init:main"
+
+[tool.uv.sources]
+skyline-core = { workspace = true }
+skyline-connectors = { workspace = true }
+skyline-checks = { workspace = true }
+skyline-frameworks = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"

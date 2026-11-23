@@ -1,0 +1,150 @@
+[project]
+name = "skyline-workspace"
+version = "0.1.0"
+description = "Skyline workspace root (not published). See README.md."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "skyline-core",
+    "skyline-connectors",
+    "skyline-checks",
+    "skyline-frameworks",
+    "skyline-api",
+    "skyline-worker",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*", "apps/api", "apps/worker"]
+
+[tool.uv.sources]
+skyline-core = { workspace = true }
+skyline-connectors = { workspace = true }
+skyline-checks = { workspace = true }
+skyline-frameworks = { workspace = true }
+skyline-api = { workspace = true }
+skyline-worker = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "coverage[toml]>=7.10",
+    "httpx>=0.28",
+    "mypy>=1.18",
+    "pip-licenses>=5.0",
+    "pytest>=8.4",
+    "pytest-asyncio>=1.2",
+    "pytest-cov>=7.0",
+    "ruff>=0.14",
+    "testcontainers>=4.13",
+    "types-pyyaml>=6.0",
+]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = [
+    "packages/core/src",
+    "packages/connectors/src",
+    "packages/checks/src",
+    "packages/frameworks/src",
+    "apps/api/src",
+    "apps/worker/src",
+]
+extend-exclude = ["apps/web", "*.md"]
+
+[tool.ruff.lint]
+# Rule sets required by docs/SECURE_CODING.md §2 (S = bandit security rules).
+select = [
+    "E", "W", "F", "I", "B", "S", "UP", "SIM", "C4", "RET", "PTH", "N",
+    "ASYNC", "PL", "RUF", "C90",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 8
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers are evaluated once at import time by design.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body", "fastapi.Header",
+    "fastapi.Cookie",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: plain asserts, literal comparison values and generated test-only credentials are fine.
+"**/tests/**" = ["S101", "PLR2004", "S105", "S106", "PLC0415"]
+"conftest.py" = ["S101", "PLR2004", "PLC0415"]
+# Alembic migrations hold static DDL only (no input reaches these strings).
+"**/migrations/versions/*.py" = ["E501"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+mypy_path = [
+    "packages/core/src",
+    "packages/connectors/src",
+    "packages/checks/src",
+    "packages/frameworks/src",
+    "apps/api/src",
+    "apps/worker/src",
+]
+explicit_package_bases = true
+files = [
+    "packages/core/src",
+    "packages/connectors/src",
+    "packages/checks/src",
+    "packages/frameworks/src",
+    "apps/api/src",
+    "apps/worker/src",
+]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*", "piplicenses.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------- pytest / coverage
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+testpaths = [
+    "packages/core/tests",
+    "packages/connectors/tests",
+    "packages/checks/tests",
+    "packages/frameworks/tests",
+    "apps/api/tests",
+    "apps/worker/tests",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+    "db: needs the PostgreSQL test container (Docker)",
+]
+filterwarnings = ["error", "ignore::DeprecationWarning:testcontainers.*", "ignore::DeprecationWarning:docker.*"]
+
+[tool.coverage.run]
+branch = true
+source = ["packages", "apps/api/src", "apps/worker/src"]
+omit = ["**/tests/**", "**/migrations/env.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.$",
+]
