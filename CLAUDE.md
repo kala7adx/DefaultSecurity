@@ -65,6 +65,19 @@ docs/                PRODUCT_BRIEF, ARCHITECTURE, THREAT_MODEL, ROADMAP, adr/
    Open-source code may be used only under a compatible licence; record it in `THIRD_PARTY.md`.
    Flag any AGPL/GPL/BSL/SSPL dependency to the user before adding it.
 
+## Secure coding & code hygiene (full standard: `docs/SECURE_CODING.md` — read it before writing code)
+- Target OWASP ASVS Level 2; review against OWASP Top 10 / API Top 10.
+- Validate all input with Pydantic (`extra="forbid"`); no string-built SQL; no `eval`/`exec`/`pickle`/
+  `yaml.load`; no `shell=True`; every HTTP call has a timeout and TLS verification on;
+  user-supplied URLs go through the SSRF guard.
+- Deny-by-default authz on every route; tenant scoping + RLS with IDOR tests.
+- Full type hints, `mypy --strict` on `packages/`, TS `strict`; ruff with security rules (S) on;
+  zero warnings; coverage ≥ 85% on `packages/`; negative tests for security-relevant code.
+- GitHub Actions pinned to commit SHAs with minimal `permissions:`; CodeQL, semgrep, gitleaks,
+  pip-audit, Trivy and OpenSSF Scorecard in CI.
+- Run the `security-reviewer` agent before committing anything touching connectors, auth, tenancy,
+  crypto, IaC or CI, and fix its findings. Meet the Definition of Done in `docs/SECURE_CODING.md`.
+
 ## How to work in this repo
 - Plan before building: for any phase or non-trivial feature, write/refresh the plan first and wait
   for my approval. Record significant decisions as ADRs (`docs/adr/NNNN-title.md`).

@@ -11,9 +11,16 @@ and `docs/ROADMAP.md` — the first line tells it to.
 
 Read CLAUDE.md, docs/PRODUCT_BRIEF.md, docs/ARCHITECTURE.md and docs/ROADMAP.md first.
 Implement Phase 1: the AWS connector.
-1. Onboarding artefacts in `deploy/terraform/onboarding/aws/` (Terraform module) and a matching
-   CloudFormation template: read-only role trusted by the Skyline principal with an ExternalId
-   condition. Verify current AWS managed policy names and whether a tighter custom policy is better.
+1. Orca-style onboarding (see brief §3a): a CloudFormation template (+ matching Terraform module
+   in `deploy/terraform/onboarding/aws/`) creating the read-only role trusted by the Skyline
+   principal with a per-integration ExternalId. The UI's "Connect AWS" button opens a CloudFormation
+   **quick-create Launch Stack URL** with parameters pre-filled; the stack **auto-registers** the
+   role ARN back to Skyline via a custom resource using a one-time, short-lived registration token
+   (design the callback endpoint securely: token bound to tenant+integration, single use, expiry,
+   rate-limited, audit-logged). Fallback: paste the ARN. Plus an **Organizations StackSets**
+   variant (service-managed, auto-deploy to new accounts) with member-account auto-discovery.
+   Verify current AWS managed policy names and whether a tighter custom policy is better;
+   lint templates with cfn-lint and scan with Trivy/checkov in CI. Write an ADR for the flow.
 2. Credential flow: AssumeRole with per-integration ExternalId; local-dev profile mode.
    Region discovery; pagination; jittered backoff on throttling; per-region failure isolation.
 3. Collectors for the services listed in the brief, normalised to Asset/Relationship records,
@@ -69,9 +76,12 @@ Read the docs first. Make Skyline deployable on any cloud.
    CSI driver, ingress, HPA for workers, NetworkPolicies, PodSecurity restricted). `helm lint` +
    `kind`-based smoke test in CI.
 3. Single-VM deploy: Compose + Caddy (auto TLS), backup script for Postgres.
-4. Terraform hosting modules: `deploy/terraform/hosting/{aws,azure,gcp}` (managed Postgres, KMS /
-   Key Vault, container platform or managed K8s, secrets store, private networking). Implement the
-   KeyProvider for each KMS. Plan only — never apply without my approval.
+4. **Skyline on AWS (reference, brief §9):** a CloudFormation template *and* Terraform module that
+   deploy the whole platform into my AWS account — VPC/private subnets, ECS Fargate (EKS via Helm
+   as the alternative), RDS PostgreSQL, KMS, Secrets Manager, ALB + ACM + WAF, CloudWatch, least-
+   privilege task roles — with a documented upgrade path. Then `deploy/terraform/hosting/{azure,gcp}`
+   equivalents. Implement the KeyProvider for AWS KMS, Key Vault and GCP KMS.
+   Plan only — never deploy or apply without my approval.
 5. `docs/DEPLOYMENT.md` with a path for each target.
 
 ---
@@ -132,6 +142,22 @@ Read the docs first.
 3. Integrations: Slack, Microsoft Teams, email, Jira (create/sync tickets), generic webhooks,
    with notification rules (e.g. new critical issue in prod).
 4. Scheduled scans per integration; scan history and diffing ("what changed since yesterday").
+
+---
+
+## Phases 10+ — Feature parity with Orca/Wiz (brief §11)
+
+Run one item per session with this template:
+
+"Read the docs first. Next parity item: **<item from brief §11>**. Write the plan and an ADR
+(permissions it needs, opt-in onboarding stack if it needs more than read-only, data it stores,
+cost impact, threat-model updates), wait for my approval, then build it in vertical slices with
+fixture tests, UI, framework mappings and docs. Update ROADMAP.md."
+
+Suggested order after Phase 9: CIEM → vulnerability prioritisation (EPSS/KEV) → KSPM →
+container registry scanning → code-to-cloud (IaC + repo + CI/CD posture) → audit-log detection →
+DSPM → AI-SPM → API security posture → remediation (generated fixes, ticket sync) →
+more SaaS (GitHub, Okta, Slack, Salesforce) → natural-language graph search → MSP tenants.
 
 ---
 
