@@ -1,0 +1,31 @@
+{
+  "asset": {
+    "resource_type": "fake.compute.vm",
+    "name": "web",
+    "config": {
+      "public_ip": "203.0.113.10"
+    }
+  },
+  "related": [
+    {
+      "type": "attached_to",
+      "direction": "out",
+      "asset": {
+        "resource_type": "fake.network.security_group",
+        "name": "web-open",
+        "config": {
+          "ingress": [
+            {
+              "protocol": "tcp",
+              "from_port": 22,
+              "to_port": 22,
+              "sources": [
+                "0.0.0.0/0"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

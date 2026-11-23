@@ -1,0 +1,11 @@
+{
+  "asset": {
+    "resource_type": "fake.storage.bucket",
+    "name": "logs",
+    "config": {
+      "encryption": {
+        "algorithm": "AES256"
+      }
+    }
+  }
+}

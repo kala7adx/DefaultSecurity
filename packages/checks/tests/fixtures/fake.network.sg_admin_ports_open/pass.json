@@ -1,0 +1,26 @@
+{
+  "asset": {
+    "resource_type": "fake.network.security_group",
+    "name": "web-only",
+    "config": {
+      "ingress": [
+        {
+          "protocol": "tcp",
+          "from_port": 443,
+          "to_port": 443,
+          "sources": [
+            "0.0.0.0/0"
+          ]
+        },
+        {
+          "protocol": "tcp",
+          "from_port": 22,
+          "to_port": 22,
+          "sources": [
+            "10.0.0.0/8"
+          ]
+        }
+      ]
+    }
+  }
+}

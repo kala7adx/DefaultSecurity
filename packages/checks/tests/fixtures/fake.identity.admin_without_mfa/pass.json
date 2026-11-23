@@ -1,0 +1,22 @@
+{
+  "asset": {
+    "resource_type": "fake.identity.user",
+    "name": "bob",
+    "config": {
+      "mfa_enabled": true
+    }
+  },
+  "related": [
+    {
+      "type": "member_of",
+      "direction": "out",
+      "asset": {
+        "resource_type": "fake.identity.role",
+        "name": "Administrators",
+        "config": {
+          "admin": true
+        }
+      }
+    }
+  ]
+}

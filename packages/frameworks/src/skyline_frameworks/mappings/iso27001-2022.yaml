@@ -1,0 +1,7 @@
+framework: iso27001-2022
+mappings:
+  fake.compute.vm_public_exposure: [A.8.20, A.8.22]
+  fake.network.sg_admin_ports_open: [A.8.20, A.8.9]
+  fake.storage.bucket_encryption: [A.8.24]
+  fake.identity.admin_without_mfa: [A.8.5, A.8.2]
+  fake.compute.unsupported_os: [A.8.8]

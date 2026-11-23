@@ -1,0 +1,24 @@
+# Cyber Essentials has no official control numbering; these IDs are Skyline's own.
+# Wording is our own summary, not NCSC text. Source: Requirements for IT Infrastructure v3.3
+# (NCSC, in force from 27 April 2026).
+id: cyber-essentials-3.3
+name: Cyber Essentials
+version: "3.3"
+source_url: https://www.ncsc.gov.uk/cyberessentials/resources
+description: UK government-backed baseline of five technical controls for IT infrastructure.
+controls:
+  - ref: CE.FW
+    title: Firewalls
+    description: Only necessary services are reachable from the internet, and boundary firewall rules are justified and kept tight.
+  - ref: CE.SC
+    title: Secure configuration
+    description: Devices and cloud services are configured to remove unnecessary accounts, services and default settings.
+  - ref: CE.SUM
+    title: Security update management
+    description: Software is supported by its vendor and high-risk security updates are applied promptly.
+  - ref: CE.UAC
+    title: User access control
+    description: Accounts are limited to what each person needs, administrative accounts are separate, and multi-factor authentication protects cloud services.
+  - ref: CE.MP
+    title: Malware protection
+    description: Malware is prevented from running, through anti-malware tools or application allow-listing.

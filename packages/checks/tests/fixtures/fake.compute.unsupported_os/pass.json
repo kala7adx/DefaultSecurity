@@ -1,0 +1,14 @@
+{
+  "now": "2026-11-23T00:00:00+00:00",
+  "asset": {
+    "resource_type": "fake.compute.vm",
+    "name": "new",
+    "config": {
+      "os": {
+        "name": "FakeOS",
+        "version": "24.04",
+        "end_of_support": "2034-04-30"
+      }
+    }
+  }
+}

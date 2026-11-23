@@ -1,0 +1,21 @@
+id: fake.storage.bucket_encryption
+version: 1
+title: Storage bucket has no default encryption
+severity: medium
+provider: fake
+resource_types: [fake.storage.bucket]
+evaluator: python
+description: >-
+  The bucket does not encrypt new objects by default.
+rationale: >-
+  Default encryption protects stored data if the underlying storage or a backup is exposed, and
+  is often required by data-protection policies.
+remediation:
+  summary: Turn on default encryption for the bucket, preferably with a managed key.
+  steps:
+    - Enable default server-side encryption on the bucket.
+    - Re-upload or re-encrypt existing objects if they must also be encrypted.
+references:
+  - title: ISO/IEC 27001:2022 (use of cryptography)
+    url: https://www.iso.org/standard/27001
+tags: [data, encryption]

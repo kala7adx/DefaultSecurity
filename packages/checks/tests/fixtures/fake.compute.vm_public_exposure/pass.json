@@ -1,0 +1,31 @@
+{
+  "asset": {
+    "resource_type": "fake.compute.vm",
+    "name": "web",
+    "config": {
+      "public_ip": "203.0.113.10"
+    }
+  },
+  "related": [
+    {
+      "type": "attached_to",
+      "direction": "out",
+      "asset": {
+        "resource_type": "fake.network.security_group",
+        "name": "tight",
+        "config": {
+          "ingress": [
+            {
+              "protocol": "tcp",
+              "from_port": 8080,
+              "to_port": 8080,
+              "sources": [
+                "10.0.0.0/16"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

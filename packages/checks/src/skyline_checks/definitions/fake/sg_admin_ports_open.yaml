@@ -1,0 +1,21 @@
+id: fake.network.sg_admin_ports_open
+version: 1
+title: Security group allows administrative ports from the internet
+severity: high
+provider: fake
+resource_types: [fake.network.security_group]
+evaluator: python
+description: >-
+  An inbound rule allows SSH (port 22) or RDP (port 3389) from any IPv4 or IPv6 address.
+rationale: >-
+  Administrative services exposed to the internet are a frequent way in for attackers, through
+  password guessing and exploits of remote-access software.
+remediation:
+  summary: Restrict SSH and RDP to known networks, or use a bastion or session manager instead.
+  steps:
+    - Remove 0.0.0.0/0 and ::/0 sources from rules covering ports 22 and 3389.
+    - Allow administrative access only from a VPN, bastion host or managed session service.
+references:
+  - title: NCSC Cyber Essentials requirements (firewalls)
+    url: https://www.ncsc.gov.uk/cyberessentials/resources
+tags: [exposure, network]
