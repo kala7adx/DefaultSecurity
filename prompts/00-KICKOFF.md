@@ -16,12 +16,28 @@ can keep shipping on.
 - The platform must be self-hostable on any cloud (Compose on one VM, Helm on any Kubernetes)
   and multi-tenant ready from day one.
 
+## Decisions already made (do not ask about these)
+- **Personal project**, owned by me. No employer code, data or exports go into it.
+- **Open source**, licence **Apache-2.0** (permissive, includes a patent grant). Dependencies must be
+  Apache-2.0/MIT/BSD/ISC/MPL-2.0 compatible; flag anything else before adding it.
+- **Hosting:** my own deployment runs on **AWS first** (design the AWS hosting Terraform module as
+  the reference one), but the platform must stay deployable on Azure and GCP too.
+- **Coverage:** scan all three major clouds (AWS first, then Azure and GCP) **and** SaaS tenants:
+  Microsoft 365 / Entra ID / Exchange Online (Outlook) and Google Workspace.
+- **Machine:** Windows 11, project at `D:\CloudSecApp`, GitHub repo `kala7adx/DefaultSecurity`.
+- For anything else with a sensible default, take the default, record it in an ADR, and tell me.
+
 ## This session: Phase 0 — Foundations (no real cloud access yet)
 
-### Step 1 — Clarify (before writing any code)
-Ask me up to 8 focused questions where the brief is ambiguous or where a choice is expensive to
-reverse (e.g. job queue, auth approach, licence for the project). Give your recommended answer for
-each so I can just say "agree". Wait for my answers.
+### Step 0 — Check my machine
+Check which of these are installed and working: git, gh (logged in), Docker Desktop (engine
+running), uv, Node.js LTS, pnpm. Give me a short table of what's missing with the exact
+`winget`/install command for each, and offer to run them (ask before installing anything).
+
+### Step 1 — Clarify (only if genuinely needed)
+Ask me at most 5 questions, and only where the brief and the decisions above don't cover a choice
+that is expensive to reverse. Give your recommended answer for each so I can just say "agree".
+If nothing needs asking, say so and go straight to Step 2.
 
 ### Step 2 — Plan (still no code)
 Produce, as files:

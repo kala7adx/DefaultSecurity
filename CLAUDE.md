@@ -13,6 +13,10 @@ and produces prioritised findings mapped to compliance frameworks (CIS, ISO 2700
 Cyber Essentials, NIST CSF 2.0). It must deploy to any cloud (Docker Compose for a single VM,
 Helm for any Kubernetes) and be designed multi-tenant from day one so it can later run as SaaS.
 
+## Project facts
+- Personal, open-source project. Licence: Apache-2.0. Repo: `kala7adx/DefaultSecurity`.
+- Developed on Windows 11 at `D:\CloudSecApp`. Owner hosts it on AWS; Azure/GCP hosting must also work.
+
 ## Tech stack (change only via an ADR in `docs/adr/`)
 - Backend: Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2 (async), Alembic. Package manager: `uv`.
 - Workers: same Python codebase, job queue behind an interface (start Postgres-backed; Redis optional later).

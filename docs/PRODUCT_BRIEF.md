@@ -179,6 +179,9 @@ Skyline is a high-value target: it holds read access to every customer environme
 - Backups encrypted; documented key rotation.
 
 ## 9. Deployment targets
+The owner's own production deployment runs on **AWS** — treat the AWS hosting module as the
+reference implementation. Azure and GCP hosting must keep working from the same images and chart.
+
 1. Local: Docker Compose (`docker compose up` gives api, worker, web, postgres).
 2. Single VM on any cloud: same Compose file + reverse proxy (Caddy) with TLS.
 3. Kubernetes: Helm chart (values for EKS / AKS / GKE / generic), external Postgres supported.
