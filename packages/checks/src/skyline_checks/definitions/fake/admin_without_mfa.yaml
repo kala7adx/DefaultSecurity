@@ -1,0 +1,21 @@
+id: fake.identity.admin_without_mfa
+version: 1
+title: Administrator account does not use multi-factor authentication
+severity: critical
+provider: fake
+resource_types: [fake.identity.user]
+evaluator: python
+description: >-
+  The user holds an administrative role but has no multi-factor authentication enabled.
+rationale: >-
+  An administrator protected only by a password can be taken over through phishing or password
+  reuse, giving an attacker control of the whole account.
+remediation:
+  summary: Require multi-factor authentication for every user with administrative access.
+  steps:
+    - Enrol the user in multi-factor authentication.
+    - Enforce MFA for administrative roles with a policy so new admins can't skip it.
+references:
+  - title: NCSC Cyber Essentials requirements (user access control)
+    url: https://www.ncsc.gov.uk/cyberessentials/resources
+tags: [identity, mfa]

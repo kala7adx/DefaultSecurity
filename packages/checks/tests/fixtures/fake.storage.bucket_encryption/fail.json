@@ -1,0 +1,9 @@
+{
+  "asset": {
+    "resource_type": "fake.storage.bucket",
+    "name": "exports",
+    "config": {
+      "encryption": null
+    }
+  }
+}

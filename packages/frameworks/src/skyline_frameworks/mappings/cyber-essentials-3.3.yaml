@@ -1,0 +1,8 @@
+# Check -> control mappings. Every entry starts unreviewed; Phase 5 adds the review workflow.
+framework: cyber-essentials-3.3
+mappings:
+  fake.compute.vm_public_exposure: [CE.FW]
+  fake.network.sg_admin_ports_open: [CE.FW, CE.SC]
+  fake.identity.admin_without_mfa: [CE.UAC]
+  fake.compute.unsupported_os: [CE.SUM]
+  # fake.storage.bucket_encryption: Cyber Essentials has no encryption-at-rest requirement.

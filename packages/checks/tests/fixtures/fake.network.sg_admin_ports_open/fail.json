@@ -1,0 +1,18 @@
+{
+  "asset": {
+    "resource_type": "fake.network.security_group",
+    "name": "wide",
+    "config": {
+      "ingress": [
+        {
+          "protocol": "tcp",
+          "from_port": 3000,
+          "to_port": 3500,
+          "sources": [
+            "::/0"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+id: fake.compute.unsupported_os
+version: 1
+title: Virtual machine runs an operating system past its end of support
+severity: high
+provider: fake
+resource_types: [fake.compute.vm]
+evaluator: python
+description: >-
+  The operating system's vendor support has ended, so it no longer receives security updates.
+rationale: >-
+  Unsupported software accumulates known, unpatched vulnerabilities.
+remediation:
+  summary: Upgrade to a supported operating system version, or replace the machine.
+  steps:
+    - Plan an upgrade or rebuild onto a supported release.
+    - Until then, isolate the machine and limit who can reach it.
+references:
+  - title: NCSC Cyber Essentials requirements (security update management)
+    url: https://www.ncsc.gov.uk/cyberessentials/resources
+tags: [patching, vulnerability]

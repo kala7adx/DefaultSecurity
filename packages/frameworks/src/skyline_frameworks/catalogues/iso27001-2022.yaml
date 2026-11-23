@@ -1,0 +1,38 @@
+# ISO/IEC 27001:2022 Annex A control references with descriptions in our own words.
+# No ISO text is reproduced. Phase 0 includes only the controls the demo checks map to.
+id: iso27001-2022
+name: ISO/IEC 27001
+version: "2022"
+source_url: https://www.iso.org/standard/27001
+description: International standard for information security management systems (Annex A controls).
+controls:
+  - ref: A.5.15
+    title: Access control
+    description: Rules for who may access information and systems are defined and enforced.
+  - ref: A.5.17
+    title: Authentication information
+    description: Passwords and other secrets used to sign in are issued and handled securely.
+  - ref: A.5.18
+    title: Access rights
+    description: Access is granted, reviewed and removed according to policy.
+  - ref: A.8.2
+    title: Privileged access rights
+    description: Administrative access is restricted, controlled and kept to a minimum.
+  - ref: A.8.5
+    title: Secure authentication
+    description: Sign-in uses strong methods, such as multi-factor authentication, matched to the risk.
+  - ref: A.8.8
+    title: Management of technical vulnerabilities
+    description: Vulnerabilities are identified and fixed in good time, including unsupported software.
+  - ref: A.8.9
+    title: Configuration management
+    description: Secure configurations are defined, applied and monitored.
+  - ref: A.8.20
+    title: Network security
+    description: Networks and network devices are secured and managed to protect systems.
+  - ref: A.8.22
+    title: Network segregation
+    description: Groups of systems and services are separated into network zones.
+  - ref: A.8.24
+    title: Use of cryptography
+    description: Encryption is used to protect information, with keys managed properly.

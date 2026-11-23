@@ -1,0 +1,14 @@
+{
+  "now": "2026-11-23T00:00:00+00:00",
+  "asset": {
+    "resource_type": "fake.compute.vm",
+    "name": "old",
+    "config": {
+      "os": {
+        "name": "FakeOS",
+        "version": "14.04",
+        "end_of_support": "2024-04-30"
+      }
+    }
+  }
+}
