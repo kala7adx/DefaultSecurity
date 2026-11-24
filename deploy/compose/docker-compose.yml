@@ -1,0 +1,167 @@
+# Skyline on one machine: `docker compose -f deploy/compose/docker-compose.yml up --build`
+# then open http://localhost:3000 (see README for the first sign-in).
+#
+# * Only the web UI is published, on 127.0.0.1. PostgreSQL, the API and the worker stay on
+#   the private network.
+# * secrets-init generates every secret once into the `secrets` volume. Each service mounts
+#   only its own directory, read-only. Nothing secret is in this file or in the environment.
+# * Hardening: non-root users, read-only root filesystems, all capabilities dropped,
+#   no-new-privileges, tmpfs for scratch space.
+# * The demo provider is enabled here (SKYLINE_DEMO_PROVIDER_ENABLED); it makes no network
+#   calls. Production deployments (Helm, Terraform) leave it off.
+
+name: skyline
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  pids_limit: 256
+
+x-app-env: &app-env
+  SKYLINE_ENV: production
+  SKYLINE_LOG_LEVEL: info
+  SKYLINE_DB_HOST: postgres
+  SKYLINE_DB_NAME: skyline
+  # Private Compose network only. Managed databases use verify-full (the default).
+  SKYLINE_DB_SSLMODE: disable
+  SKYLINE_DB_PASSWORD_FILE: /run/skyline/db_password
+  SKYLINE_LOCAL_KEK_FILE: /run/skyline/kek.json
+  SKYLINE_DEMO_PROVIDER_ENABLED: "true"
+
+services:
+  secrets-init:
+    build: { context: ../.., dockerfile: deploy/docker/python.Dockerfile, target: worker }
+    image: skyline-worker:local
+    # Root, but only to create and chown files in the secrets volume.
+    user: "0:0"
+    entrypoint: ["skyline-secrets-init", "--root", "/secrets"]
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m"]
+    network_mode: none
+    volumes:
+      - secrets:/secrets
+    restart: "no"
+
+  postgres:
+    image: postgres:17-bookworm@sha256:837bed18782820fe967067cb5328b02b0d9992c1be9a37ee0c9c492cfc03af3b
+    depends_on:
+      secrets-init: { condition: service_completed_successfully }
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/skyline-secrets/superuser_password
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    # The entrypoint starts as root to fix data-directory ownership, then drops to postgres.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - type: volume
+        source: secrets
+        target: /run/skyline-secrets
+        read_only: true
+        volume: { subpath: postgres }
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d skyline"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: skyline-worker:local
+    depends_on:
+      postgres: { condition: service_healthy }
+    entrypoint: ["skyline-migrate"]
+    environment:
+      <<: *app-env
+      SKYLINE_DB_USER: skyline_owner
+      SKYLINE_BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      SKYLINE_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/skyline/bootstrap_admin_password
+    networks: [backend]
+    <<: *hardening
+    volumes:
+      - type: volume
+        source: secrets
+        target: /run/skyline
+        read_only: true
+        volume: { subpath: migrate }
+    restart: "no"
+
+  api:
+    build: { context: ../.., dockerfile: deploy/docker/python.Dockerfile, target: api }
+    image: skyline-api:local
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    environment:
+      <<: *app-env
+      SKYLINE_DB_USER: skyline_api
+      SKYLINE_SESSION_KEY_FILE: /run/skyline/session_key
+      SKYLINE_PUBLIC_ORIGIN: http://localhost:3000
+      # Nothing in front appends X-Forwarded-For (Next.js passes it through), so 0, and
+      # every user shares one login-throttling IP bucket. That is fine on 127.0.0.1. Before
+      # exposing the port, put Caddy/nginx in front (appending X-Forwarded-For) and set 1.
+      SKYLINE_TRUSTED_PROXY_HOPS: "0"
+      SKYLINE_HSTS: "false" # plain http on localhost; turn on wherever TLS terminates
+    networks: [frontend, backend]
+    <<: *hardening
+    volumes:
+      - type: volume
+        source: secrets
+        target: /run/skyline
+        read_only: true
+        volume: { subpath: api }
+    restart: unless-stopped
+
+  worker:
+    image: skyline-worker:local
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    environment:
+      <<: *app-env
+      SKYLINE_DB_USER: skyline_worker
+    # backend for the database; egress for provider APIs (real connectors, Phase 1+).
+    networks: [backend, egress]
+    <<: *hardening
+    volumes:
+      - type: volume
+        source: secrets
+        target: /run/skyline
+        read_only: true
+        volume: { subpath: worker }
+    restart: unless-stopped
+
+  web:
+    build: { context: ../.., dockerfile: deploy/docker/web.Dockerfile }
+    image: skyline-web:local
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+    networks: [frontend]
+    <<: *hardening
+    tmpfs:
+      - "/tmp:size=64m,mode=1777"
+      - "/app/apps/web/.next/cache:size=128m,uid=1000,gid=1000"
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+networks:
+  # web <-> api only. The web container (the internet-facing process) can't reach postgres.
+  frontend:
+  # api, worker, migrate <-> postgres. No route out.
+  backend:
+    internal: true
+  egress:
+
+volumes:
+  pgdata:
+  secrets:
