@@ -13,11 +13,41 @@ findings mapped to compliance frameworks (Cyber Essentials, ISO 27001:2022, CIS,
 
 Requirements: Docker Desktop or Docker Engine with Compose v2.
 
-```sh
-docker compose -f deploy/compose/docker-compose.yml up --build
-```
+1. Start everything (the first build takes a few minutes):
 
-Quick-start steps are completed in the final Phase 0 slice.
+   ```sh
+   docker compose -f deploy/compose/docker-compose.yml up --build -d --wait
+   ```
+
+   A one-shot `secrets-init` container generates every secret (database passwords, the
+   key-encryption key, the session key, the first admin password) into a Docker volume.
+   Nothing secret is in the repository or the Compose file.
+
+2. Read the generated admin password once (it is never logged):
+
+   ```sh
+   docker compose -f deploy/compose/docker-compose.yml run --rm --no-deps -T --entrypoint cat secrets-init /secrets/admin/bootstrap_admin_password
+   ```
+
+3. Open <http://localhost:3000> (bound to 127.0.0.1 only) and sign in as `admin@example.com`
+   with that password. You must choose a new password (12+ characters) straight away.
+
+4. **Integrations → Add demo company.** Skyline verifies it, runs the first scan and shows
+   five findings, each mapped to Cyber Essentials v3.3 and/or ISO 27001:2022 controls.
+
+5. **Simulate fixes**, then watch the findings auto-resolve after the rescan. **Undo** reopens
+   them. Every action is in the audit log.
+
+To start over: `docker compose -f deploy/compose/docker-compose.yml down -v` (deletes the
+database and the generated secrets).
+
+### Developing
+
+```sh
+uv sync && uv run pytest                    # backend tests (needs Docker for PostgreSQL)
+uv run ruff check . && uv run mypy && uv run mypy packages
+pnpm install && pnpm --dir apps/web lint && pnpm --dir apps/web test
+```
 
 ## Documentation
 
