@@ -31,6 +31,8 @@ class ProviderInfo:
     description: str
     config_model: type[BaseModel]
     credential_mode: CredentialMode
+    #: Only usable in development or with ``SKYLINE_DEMO_PROVIDER_ENABLED=true``.
+    demo_only: bool = False
 
 
 PROVIDERS: Final[Mapping[str, ProviderInfo]] = {
@@ -43,6 +45,7 @@ PROVIDERS: Final[Mapping[str, ProviderInfo]] = {
         ),
         config_model=FakeConfig,
         credential_mode=CredentialMode.GENERATED,
+        demo_only=True,
     ),
 }
 

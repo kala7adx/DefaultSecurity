@@ -8,13 +8,13 @@ exercise (``skyline_api`` / ``skyline_worker``), so Row-Level Security and grant
 from __future__ import annotations
 
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
-from sqlalchemy import insert, text
+from sqlalchemy import insert, text, update
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -23,14 +23,19 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from skyline_checks.loader import LoadedCheck, load_checks
+from skyline_core.crypto import LocalKeyProvider, SecretSealer
 from skyline_core.db.engine import create_engine, create_session_factory
 from skyline_core.db.migrate import upgrade_to_head
-from skyline_core.db.models import Membership, Role, Tenant, User
+from skyline_core.db.models import Job, Membership, Role, Tenant, User
 from skyline_core.db.roles import LOGIN_ROLES, create_roles
-from skyline_core.db.tenancy import tenant_scope
+from skyline_core.db.tenancy import system_scope, tenant_scope
+from skyline_core.secrets_store import create_redaction_key
 from skyline_core.security.passwords import hash_password
 from skyline_core.settings import CoreSettings, Environment
 from skyline_core.types import Sensitive
+from skyline_frameworks.loader import load_frameworks
+from skyline_worker.catalogue import sync_catalogue
 
 # Keep in sync with deploy/compose/docker-compose.yml.
 POSTGRES_IMAGE = (
@@ -158,3 +163,30 @@ async def fresh_database(
         async with admin.connect() as conn:
             await conn.execute(text(f'DROP DATABASE "{name}" WITH (FORCE)'))
         await admin.dispose()
+
+
+#: One local KEK shared by the API (seals) and worker (opens) in tests.
+TEST_KEYS = LocalKeyProvider({"test-kek": secrets.token_bytes(32)}, "test-kek")
+
+
+async def sync_test_catalogue(db: Database) -> Sequence[LoadedCheck]:
+    """Sync the shipped checks and frameworks, as skyline-migrate does."""
+    checks = load_checks()
+    async with system_scope(db.factory("skyline_owner")) as session:
+        await sync_catalogue(session, checks, load_frameworks())
+    return checks
+
+
+async def add_redaction_key(db: Database, tenant: TenantFixture) -> None:
+    async with tenant_scope(db.factory("skyline_owner"), tenant.id) as session:
+        await create_redaction_key(session, SecretSealer(TEST_KEYS), tenant_id=tenant.id)
+
+
+async def reset_jobs(db: Database) -> None:
+    """Finish leftovers from other tests so each test's worker claims only its own jobs."""
+    async with system_scope(db.factory("skyline_worker")) as session:
+        await session.execute(
+            update(Job)
+            .where(Job.status.in_(["queued", "running"]))
+            .values(status="succeeded", lease_expires_at=None)
+        )

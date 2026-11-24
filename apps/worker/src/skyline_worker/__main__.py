@@ -10,9 +10,11 @@ from datetime import timedelta
 from skyline_checks.loader import load_checks
 from skyline_core.crypto import LocalKeyProvider, SecretOpener
 from skyline_core.db.engine import create_engine, create_session_factory
+from skyline_core.db.tenancy import system_scope
 from skyline_core.logging import configure_logging, get_logger
 from skyline_core.queue import PostgresJobQueue
 from skyline_core.settings import SettingsError
+from skyline_worker.catalogue import catalogue_drift
 from skyline_worker.context import WorkerContext
 from skyline_worker.runner import Worker
 from skyline_worker.settings import WorkerSettings
@@ -25,13 +27,22 @@ async def serve(settings: WorkerSettings) -> None:
         msg = "SKYLINE_LOCAL_KEK_FILE is required"
         raise SettingsError(msg)
     engine = create_engine(settings, application_name="skyline-worker")
+    factory = create_session_factory(engine)
+    checks = load_checks()
+    async with system_scope(factory, read_only=True) as session:
+        drift = await catalogue_drift(session, checks)
+    if drift:
+        await engine.dispose()
+        msg = "check catalogue does not match the database: " + "; ".join(drift[:10])
+        raise SettingsError(msg)
     ctx = WorkerContext(
         engine=engine,
-        session_factory=create_session_factory(engine),
+        session_factory=factory,
         # Decrypt-only side of envelope encryption (ADR-0006).
         opener=SecretOpener(LocalKeyProvider.from_file(settings.local_kek_file)),
         queue=PostgresJobQueue(),
-        checks=load_checks(),
+        checks=checks,
+        demo_providers_allowed=settings.demo_providers_allowed,
     )
     worker = Worker(
         ctx,
@@ -40,6 +51,7 @@ async def serve(settings: WorkerSettings) -> None:
         poll_seconds=settings.poll_seconds,
         scheduler_seconds=settings.scheduler_seconds,
         reaper_seconds=settings.reaper_seconds,
+        sweeper_seconds=settings.sweeper_seconds,
         heartbeat_file=settings.heartbeat_file,
     )
     loop = asyncio.get_running_loop()

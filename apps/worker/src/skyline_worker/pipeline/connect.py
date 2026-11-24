@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import cast, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ColumnElement
 
 from skyline_connectors.registry import ConnectorSpec, UnknownProviderError, get_spec
 from skyline_core.crypto import CryptoError, SecretPurpose
@@ -26,8 +30,48 @@ class IntegrationUnavailableError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class IntegrationSnapshot:
+    """What a job saw when it loaded the integration. Status changes the job makes are
+    conditional on the row still matching this, so a job never overwrites a newer change
+    (a config edit, a new credential, a delete) with a verdict about the old one."""
+
+    tenant_id: UUID
+    id: UUID
+    status: str
+    config: dict[str, Any]
+    credential_secret_id: UUID | None
+
+    @classmethod
+    def of(cls, integration: Integration) -> IntegrationSnapshot:
+        return cls(
+            tenant_id=integration.tenant_id,
+            id=integration.id,
+            status=integration.status,
+            config=copy.deepcopy(integration.config),
+            credential_secret_id=integration.credential_secret_id,
+        )
+
+    def unchanged(self) -> list[ColumnElement[bool]]:
+        """WHERE predicates that hold only while the row is as this snapshot saw it."""
+        credential = (
+            Integration.credential_secret_id.is_(None)
+            if self.credential_secret_id is None
+            else Integration.credential_secret_id == self.credential_secret_id
+        )
+        return [
+            Integration.tenant_id == self.tenant_id,
+            Integration.id == self.id,
+            Integration.status == self.status,
+            Integration.config == cast(self.config, JSONB),
+            credential,
+            Integration.deleted_at.is_(None),
+        ]
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedIntegration:
     integration: Integration
+    snapshot: IntegrationSnapshot
     spec: ConnectorSpec
     config: BaseModel
     credentials: BaseModel  # SecretStr fields; repr never shows them
@@ -55,6 +99,8 @@ async def prepare(
         spec = get_spec(integration.provider)
     except UnknownProviderError:
         raise IntegrationUnavailableError("this provider is not supported") from None
+    if spec.info.demo_only and not ctx.demo_providers_allowed:
+        raise IntegrationUnavailableError("the demo provider is disabled on this deployment")
     try:
         config = spec.info.config_model.model_validate(integration.config)
     except ValidationError:
@@ -72,7 +118,9 @@ async def prepare(
         credentials = spec.credential_model.model_validate_json(sealed.reveal())
     except (SecretNotFoundError, CryptoError, ValidationError):
         raise IntegrationUnavailableError("the stored credential could not be read") from None
-    return PreparedIntegration(integration, spec, config, credentials)
+    return PreparedIntegration(
+        integration, IntegrationSnapshot.of(integration), spec, config, credentials
+    )
 
 
 async def redaction_key(session: AsyncSession, ctx: WorkerContext, tenant_id: UUID) -> bytes:

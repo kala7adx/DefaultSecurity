@@ -9,9 +9,9 @@ or HTTP clients (enforced by an AST test).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import random
+from asyncio import sleep, timeout
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Protocol
@@ -30,7 +30,12 @@ _MAX_RETRY_AFTER_SECONDS: Final = 120.0
 
 
 class Transport(Protocol):
-    """Sends one request to a provider. Implementations hold the credentials."""
+    """Sends one request to a provider. Implementations hold the credentials.
+
+    A transport is built with the connector's validated allowlist and must refuse anything
+    outside it (:class:`ApiNotAllowedError`) on its own, so even code that somehow reached the
+    transport directly couldn't make a non-read call.
+    """
 
     async def send(self, api: ApiCall, params: Mapping[str, JSON]) -> Mapping[str, JSON]: ...
 
@@ -57,13 +62,22 @@ class GuardedGateway:
         allowlist: frozenset[ApiCall],
         limits: GatewayLimits | None = None,
         *,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        sleep: Callable[[float], Awaitable[None]] = sleep,
     ) -> None:
         self._transport = transport
         self._allowlist = allowlist
         self._limits = limits or GatewayLimits()
         self._sleep = sleep
         self.calls: list[ApiCall] = []
+        # Every call the guard refused (here or in the transport). Private, with a read-only
+        # view below: connector code reaching for ``._violations`` trips the AST rules.
+        self._violations: list[ApiCall] = []
+
+    @property
+    def violations(self) -> tuple[ApiCall, ...]:
+        """Refused calls so far. The worker checks this after each step, so a connector
+        can't hide a violation by catching the error."""
+        return tuple(self._violations)
 
     def _backoff(self, attempt: int) -> float:
         ceiling = min(
@@ -73,13 +87,17 @@ class GuardedGateway:
 
     async def call(self, api: ApiCall, /, **params: JSON) -> Mapping[str, JSON]:
         if api not in self._allowlist:
+            self._violations.append(api)
             raise ApiNotAllowedError(api)
         last_error: TransientError | None = None
         for attempt in range(self._limits.max_attempts):
             self.calls.append(api)
             try:
-                async with asyncio.timeout(self._limits.timeout_seconds):
+                async with timeout(self._limits.timeout_seconds):
                     response = await self._transport.send(api, params)
+            except ApiNotAllowedError:
+                self._violations.append(api)  # refused by the transport's own check
+                raise
             except ThrottledError as exc:
                 last_error = exc
                 delay = exc.retry_after if exc.retry_after is not None else self._backoff(attempt)

@@ -32,8 +32,26 @@ Enforce read-only access in five independent layers:
    - an AST test forbids importing provider SDKs or HTTP clients (`boto3`, `botocore`, `httpx`,
      `requests`, `urllib`, `socket`, `msgraph`, `googleapiclient` …) in connector modules other
      than the gateway adapters
+   - (amended 2026-11-24) the AST rules allowlist imported *names*, not just modules; only the
+     registry may import gateways, transports or the runner; reflection built-ins, `importlib`,
+     `get_type_hints`, `ImportString`/`TypeAdapter`, dunder and foreign private attributes are
+     banned. A corpus of known bypasses is tested. These rules are a **tripwire**: Python can't
+     isolate code inside one process, so layers 1 and 3 are the real boundaries.
 5. **SDK hook (Phase 1):** a boto3/botocore `before-call` event handler applies the same
    allowlist inside the SDK, as defence in depth (verify event names in Phase 1).
+
+Runtime details (amended 2026-11-24 after the Phase 0 re-review):
+- `ApiNotAllowedError` derives from `ReadOnlyGuardError`, **not** `ConnectorError`, so connector
+  code catching provider errors can't swallow it. The gateway and the transport both refuse, and
+  the gateway records every refusal; the worker checks that record after each step. Any
+  violation fails the whole scan, stores nothing and writes a `connector.read_only_violation`
+  audit row (a violation during verify leaves the integration's status alone and isn't retried).
+- The SDK deny list (`DENIED_SDK_OPERATIONS`) is a tripwire too; names are re-checked against
+  the AWS Service Authorization Reference when each service gets a collector.
+- HTTP connectors (Phase 2+): allowlist entries are path *templates*. The HTTP transport must
+  percent-encode every path parameter (`quote(value, safe="")`), reject `/`, `..` and encoded
+  separators in parameter values, and allowlist query parameters per operation (no `alt=media`,
+  `$value`, `$expand` into content). Checked on each call, not only at registration.
 
 Remediation or any write capability needs a new ADR, a separate opt-in permission stack, and a
 separate connector identity (brief §11 "Remediation").

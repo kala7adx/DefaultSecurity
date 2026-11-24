@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from dataclasses import dataclass
 from functools import cache
 from importlib import resources
@@ -54,9 +55,15 @@ def parse_definition(text: str, *, source: str) -> CheckDefinition:
         raise CatalogueError(msg) from exc
 
 
-def content_hash(definition: CheckDefinition) -> bytes:
-    """SHA-256 of the canonical definition, used to detect edits without a version bump."""
-    return hashlib.sha256(canonical_json(definition.model_dump(mode="json"))).digest()
+def content_hash(definition: CheckDefinition, evaluator: Evaluator | None = None) -> bytes:
+    """SHA-256 of the canonical definition and the evaluator's source code, used to detect
+    edits without a version bump. Helpers the evaluator calls are not included, so a change
+    to a shared helper still needs a deliberate version bump."""
+    digest = hashlib.sha256(canonical_json(definition.model_dump(mode="json")))
+    if evaluator is not None:
+        digest.update(b"\x00evaluator\x00")
+        digest.update(inspect.getsource(evaluator).encode())
+    return digest.digest()
 
 
 @cache
@@ -74,7 +81,7 @@ def load_checks() -> tuple[LoadedCheck, ...]:
         if fn is None:
             msg = f"{file.name}: no evaluator registered for {definition.id}"
             raise CatalogueError(msg)
-        checks[definition.id] = LoadedCheck(definition, content_hash(definition), fn)
+        checks[definition.id] = LoadedCheck(definition, content_hash(definition, fn), fn)
     orphans = sorted(set(evaluators) - set(checks))
     if orphans:
         msg = f"evaluators without a definition: {', '.join(orphans)}"

@@ -22,6 +22,9 @@ from skyline_connectors.fake.transport import FakeTransport
 from skyline_connectors.gateway import GatewayLimits, GuardedGateway, Transport
 from skyline_core.redaction import RedactionRules
 
+#: ``(config, credentials, validated allowlist) -> transport``.
+type TransportFactory = Callable[[BaseModel, BaseModel, frozenset[ApiCall]], Transport]
+
 
 class ConnectorClass(Protocol):
     """A connector type: class-level allowlist plus a gateway-only constructor."""
@@ -37,7 +40,7 @@ class ConnectorSpec:
     info: ProviderInfo
     connector: ConnectorClass
     credential_model: type[BaseModel]
-    transport_factory: Callable[[BaseModel, BaseModel], Transport]
+    transport_factory: TransportFactory
     allowlist_style: AllowlistStyle
     allowlist: frozenset[ApiCall]
     redaction: RedactionRules
@@ -45,17 +48,19 @@ class ConnectorSpec:
     def build(
         self, config: BaseModel, credentials: BaseModel, limits: GatewayLimits | None = None
     ) -> tuple[Connector, GuardedGateway]:
-        """Wire transport → guarded gateway → connector. The connector never sees the transport."""
-        gateway = GuardedGateway(
-            self.transport_factory(config, credentials), self.allowlist, limits
-        )
+        """Wire transport → guarded gateway → connector. The connector never sees the
+        transport, and both the gateway and the transport enforce the validated allowlist."""
+        transport = self.transport_factory(config, credentials, self.allowlist)
+        gateway = GuardedGateway(transport, self.allowlist, limits)
         return self.connector(gateway=gateway), gateway
 
 
-def _fake_transport(config: BaseModel, credentials: BaseModel) -> Transport:
+def _fake_transport(
+    config: BaseModel, credentials: BaseModel, allowlist: frozenset[ApiCall]
+) -> Transport:
     assert isinstance(config, FakeConfig)  # noqa: S101 - spec pairs models with factories
     assert isinstance(credentials, FakeCredentials)  # noqa: S101
-    return FakeTransport(config, credentials)
+    return FakeTransport(config, credentials, allowlist)
 
 
 def make_spec(
@@ -63,7 +68,7 @@ def make_spec(
     info: ProviderInfo,
     connector: ConnectorClass,
     credential_model: type[BaseModel],
-    transport_factory: Callable[[BaseModel, BaseModel], Transport],
+    transport_factory: TransportFactory,
     allowlist_style: AllowlistStyle,
     redaction: RedactionRules,
 ) -> ConnectorSpec:

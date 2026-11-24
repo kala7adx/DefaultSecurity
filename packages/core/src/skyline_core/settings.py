@@ -99,9 +99,13 @@ class CoreSettings(BaseSettings):
     db_sslrootcert: Path | None = None
     db_pool_size: int = Field(default=5, ge=1, le=50)
     db_statement_timeout_ms: int = Field(default=30_000, ge=1_000, le=600_000)
+    db_idle_in_transaction_timeout_ms: int = Field(default=60_000, ge=1_000, le=3_600_000)
 
     key_provider: Literal["local"] = "local"
     local_kek_file: Path | None = None
+
+    #: Allow the deterministic ``fake`` demo provider outside development (Compose demo).
+    demo_provider_enabled: bool = False
 
     @classmethod
     def settings_customise_sources(
@@ -128,6 +132,11 @@ class CoreSettings(BaseSettings):
     def is_development(self) -> bool:
         """True only for local development (enables OpenAPI docs and dev conveniences)."""
         return self.env is Environment.DEVELOPMENT
+
+    @property
+    def demo_providers_allowed(self) -> bool:
+        """The ``fake`` provider is for development and explicit demos only."""
+        return self.is_development or self.demo_provider_enabled
 
     def db_ssl(self) -> ssl.SSLContext | bool:
         """The ``ssl`` argument for asyncpg, built from ``db_sslmode``."""

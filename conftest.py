@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import secrets
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 
 import pytest
 from testcontainers.community.postgres import PostgresContainer
 
-from testsupport import POSTGRES_IMAGE, Database, TenantFixture, create_tenant, prepare_database
+from skyline_checks.loader import LoadedCheck
+from testsupport import (
+    POSTGRES_IMAGE,
+    Database,
+    TenantFixture,
+    create_tenant,
+    prepare_database,
+    sync_test_catalogue,
+)
 
 
 @pytest.fixture(scope="session")
@@ -43,3 +51,8 @@ async def tenant(db: Database) -> TenantFixture:
 @pytest.fixture
 async def other_tenant(db: Database) -> TenantFixture:
     return await create_tenant(db)
+
+
+@pytest.fixture(scope="session")
+async def catalogue(db: Database) -> Sequence[LoadedCheck]:
+    return await sync_test_catalogue(db)

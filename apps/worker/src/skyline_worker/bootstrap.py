@@ -1,7 +1,9 @@
 """First-run bootstrap (run by migrate as the owner role): default tenant and admin.
 
 Idempotent: if any tenant exists nothing is created, but a tenant missing its redaction key
-gets one. The admin must change the generated password on first login.
+gets one. Everything happens in **one transaction**, so a failure part-way can never leave a
+tenant without its admin (which a re-run would then skip). The admin must change the
+generated password on first login.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from skyline_core.audit import AuditAction, record_audit
 from skyline_core.crypto import SecretSealer
 from skyline_core.db.models import ActorType, Membership, Role, Tenant, User
-from skyline_core.db.tenancy import system_scope, tenant_scope
+from skyline_core.db.tenancy import set_tenant, system_scope
 from skyline_core.secrets_store import create_redaction_key
 from skyline_core.security.passwords import check_password_policy, hash_password
 
@@ -55,22 +57,23 @@ async def bootstrap(
 ) -> BootstrapResult:
     async with system_scope(factory) as session:
         tenants = (await session.execute(select(Tenant.id, Tenant.redaction_key_secret_id))).all()
-    keys_created = 0
-    for tenant_id, key_id in tenants:
-        if key_id is None:
-            async with tenant_scope(factory, tenant_id) as session:
-                await create_redaction_key(session, sealer, tenant_id=tenant_id)
-            keys_created += 1
-    if tenants:
-        return BootstrapResult(created=False, tenant_id=None, redaction_keys_created=keys_created)
+        keys_created = 0
+        for existing_id, key_id in tenants:
+            if key_id is None:
+                await set_tenant(session, existing_id)
+                await create_redaction_key(session, sealer, tenant_id=existing_id)
+                keys_created += 1
+        if tenants:
+            return BootstrapResult(
+                created=False, tenant_id=None, redaction_keys_created=keys_created
+            )
 
-    if not admin_password:
-        msg = "SKYLINE_BOOTSTRAP_ADMIN_PASSWORD_FILE is required for the first run"
-        raise BootstrapError(msg)
-    email = normalise_email(admin_email)
-    check_password_policy(admin_password, email=email)
-    tenant_id, user_id = uuid4(), uuid4()
-    async with system_scope(factory) as session:
+        if not admin_password:
+            msg = "SKYLINE_BOOTSTRAP_ADMIN_PASSWORD_FILE is required for the first run"
+            raise BootstrapError(msg)
+        email = normalise_email(admin_email)
+        check_password_policy(admin_password, email=email)
+        tenant_id, user_id = uuid4(), uuid4()
         await session.execute(
             insert(Tenant).values(id=tenant_id, slug=tenant_slug, name=tenant_name)
         )
@@ -82,7 +85,7 @@ async def bootstrap(
                 must_change_password=True,
             )
         )
-    async with tenant_scope(factory, tenant_id) as session:
+        await set_tenant(session, tenant_id)
         await session.execute(
             insert(Membership).values(tenant_id=tenant_id, user_id=user_id, role=Role.ADMIN.value)
         )
