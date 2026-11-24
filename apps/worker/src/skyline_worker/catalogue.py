@@ -122,6 +122,31 @@ async def _sync_framework(session: AsyncSession, bundle: FrameworkBundle) -> tup
     return len(cat.controls), len(wanted)
 
 
+async def catalogue_drift(session: AsyncSession, checks: Sequence[LoadedCheck]) -> list[str]:
+    """Differences between this process's checks and the synced catalogue (empty = in sync).
+
+    The worker refuses to start on drift: it would otherwise record findings under a check
+    version whose stored definition (title, remediation, mappings) says something else.
+    """
+    stored = {
+        row.id: (row.version, bytes(row.content_hash))
+        for row in (
+            await session.execute(
+                select(Check.id, Check.version, Check.content_hash).where(Check.enabled)
+            )
+        ).all()
+    }
+    shipped = {c.definition.id: (c.definition.version, c.content_hash) for c in checks}
+    problems = [f"{cid}: not synced (run skyline-migrate)" for cid in shipped if cid not in stored]
+    problems += [
+        f"{cid}: differs from the synced version"
+        for cid, value in shipped.items()
+        if cid in stored and stored[cid] != value
+    ]
+    problems += [f"{cid}: enabled but not shipped" for cid in stored if cid not in shipped]
+    return sorted(problems)
+
+
 async def sync_catalogue(
     session: AsyncSession, checks: Sequence[LoadedCheck], bundles: Sequence[FrameworkBundle]
 ) -> SyncReport:

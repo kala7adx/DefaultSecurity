@@ -41,6 +41,8 @@ class AuditAction(StrEnum):
     INTEGRATION_VERIFY_FAILED = "integration.verify_failed"
     SCAN_REQUESTED = "scan.requested"
     SCAN_FINISHED = "scan.finished"
+    #: A connector tried an API call outside its allowlist (ADR-0005): the scan was stopped.
+    READ_ONLY_VIOLATION = "connector.read_only_violation"
     EXCEPTION_CREATED = "exception.created"
     EXCEPTION_REVOKED = "exception.revoked"
     BOOTSTRAP_COMPLETED = "platform.bootstrap"

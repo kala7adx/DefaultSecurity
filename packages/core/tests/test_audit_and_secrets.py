@@ -96,9 +96,9 @@ async def test_audit_time_and_id_cannot_be_set_by_apps(db: Database, tenant: Ten
     with pytest.raises(ProgrammingError, match="permission denied"):
         async with tenant_scope(db.factory("skyline_api"), tenant.id) as session:
             await session.execute(
-                insert(AuditLog.__table__)
+                insert(AuditLog.__table__)  # type: ignore[arg-type]
                 .inline()
-                .values(  # type: ignore[arg-type]
+                .values(
                     tenant_id=tenant.id,
                     actor_type="system",
                     action="x",

@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final, Protocol
@@ -67,6 +67,8 @@ class ClaimedJob:
     payload: _Payload
     attempts: int
     max_attempts: int
+    #: The lease holder. A handler re-checks it with :meth:`JobQueue.owns` before committing.
+    worker_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +137,12 @@ class JobQueue(Protocol):
     ) -> bool: ...
 
     async def reap_expired(self, session: AsyncSession) -> list[ReapedJob]: ...
+
+    async def owns(self, session: AsyncSession, job: ClaimedJob) -> bool: ...
+
+    async def recently_dead(
+        self, session: AsyncSession, *, kinds: Sequence[JobKind], window: timedelta
+    ) -> list[ReapedJob]: ...
 
 
 def _kind_of(payload: JobPayload) -> JobKind:
@@ -214,7 +222,52 @@ class PostgresJobQueue:
             payload=payload,
             attempts=row.attempts,
             max_attempts=row.max_attempts,
+            worker_id=worker_id,
         )
+
+    async def owns(self, session: AsyncSession, job: ClaimedJob) -> bool:
+        """True if ``job`` is still running under this worker's lease. Locks the job row until
+        the caller's transaction ends, so the reaper can't take it away mid-commit."""
+        row = (
+            await session.execute(
+                select(Job.id)
+                .where(
+                    Job.id == job.id,
+                    Job.locked_by == job.worker_id,
+                    Job.status == JobStatus.RUNNING.value,
+                )
+                .with_for_update()
+            )
+        ).one_or_none()
+        return row is not None
+
+    async def recently_dead(
+        self, session: AsyncSession, *, kinds: Sequence[JobKind], window: timedelta
+    ) -> list[ReapedJob]:
+        """Dead or failed jobs of ``kinds`` that finished within ``window`` (for sweeps that
+        make sure their scan runs and integrations didn't stay "running" forever)."""
+        rows = (
+            await session.execute(
+                select(Job.id, Job.tenant_id, Job.kind, Job.payload)
+                .where(
+                    Job.kind.in_([k.value for k in kinds]),
+                    # Out of retries or leases. FAILED jobs failed permanently on purpose and
+                    # were settled by their handler.
+                    Job.status == JobStatus.DEAD.value,
+                    Job.finished_at > func.now() - window,
+                )
+                .order_by(Job.finished_at.desc())
+                .limit(200)
+            )
+        ).all()
+        dead: list[ReapedJob] = []
+        for row in rows:
+            try:
+                kind, payload = decode_payload(row.kind, row.payload)
+            except InvalidJobError:
+                continue
+            dead.append(ReapedJob(row.id, row.tenant_id, kind, payload, dead=True))
+        return dead
 
     async def heartbeat(
         self, session: AsyncSession, *, job_id: UUID, worker_id: str, lease: timedelta
@@ -241,7 +294,11 @@ class PostgresJobQueue:
     ) -> None:
         await session.execute(
             update(Job)
-            .where(Job.id == job_id, Job.locked_by == worker_id)
+            .where(
+                Job.id == job_id,
+                Job.locked_by == worker_id,
+                Job.status == JobStatus.RUNNING.value,
+            )
             .values(
                 status=status.value,
                 last_error=error,
@@ -271,7 +328,11 @@ class PostgresJobQueue:
         if retryable and job.attempts < job.max_attempts:
             await session.execute(
                 update(Job)
-                .where(Job.id == job.id, Job.locked_by == worker_id)
+                .where(
+                    Job.id == job.id,
+                    Job.locked_by == worker_id,
+                    Job.status == JobStatus.RUNNING.value,
+                )
                 .values(
                     status=JobStatus.QUEUED.value,
                     run_at=func.now() + retry_delay(job.attempts),

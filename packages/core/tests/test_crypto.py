@@ -65,7 +65,7 @@ async def test_context_mismatch_fails(provider: LocalKeyProvider, field: str) ->
         "purpose": SecretPurpose.REDACTION_HMAC_KEY,
     }[field]
     with pytest.raises(DecryptionError):
-        await SecretOpener(provider).open(sealed, replace(ctx, **{field: other}))
+        await SecretOpener(provider).open(sealed, replace(ctx, **{field: other}))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("field", ["ciphertext", "nonce", "wrapped_dek"])
@@ -75,7 +75,7 @@ async def test_tampering_fails(provider: LocalKeyProvider, field: str) -> None:
     value = bytearray(getattr(sealed, field))
     value[-1] ^= 0x01
     with pytest.raises(DecryptionError):
-        await SecretOpener(provider).open(replace(sealed, **{field: bytes(value)}), ctx)
+        await SecretOpener(provider).open(replace(sealed, **{field: bytes(value)}), ctx)  # type: ignore[arg-type]
 
 
 async def test_truncated_wrapped_key_fails(provider: LocalKeyProvider) -> None:

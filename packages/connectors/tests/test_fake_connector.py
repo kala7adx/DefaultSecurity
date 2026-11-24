@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from collections import Counter
+from collections.abc import Mapping
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -159,11 +160,47 @@ async def test_transport_rejects_unknown_calls_even_if_gateway_were_bypassed() -
     from skyline_connectors.base import ApiCall
     from skyline_connectors.fake.transport import FakeTransport
 
-    transport = FakeTransport(FakeConfig(), _creds())
-    with pytest.raises(Exception, match="unknown"):
+    transport = FakeTransport(FakeConfig(), _creds(), FakeConnector.api_allowlist)
+    with pytest.raises(ApiNotAllowedError):
         await transport.send(ApiCall("fake", "DeleteBucket"), {})
-    with pytest.raises(Exception, match="unknown"):
+    with pytest.raises(ApiNotAllowedError):
         await transport.send(ApiCall("other", "ListRegions"), {})
     gateway = GuardedGateway(transport, frozenset())
     with pytest.raises(ApiNotAllowedError):
         await gateway.call(ApiCall("fake", "ListRegions"))
+
+
+async def test_transport_enforces_its_own_allowlist() -> None:
+    from skyline_connectors.base import ApiCall
+    from skyline_connectors.fake.transport import FakeTransport
+
+    narrow = frozenset({ApiCall("fake", "ListRegions")})
+    transport = FakeTransport(FakeConfig(), _creds(), narrow)
+    # A gateway that (wrongly) allowed more is still stopped at the transport.
+    gateway = GuardedGateway(transport, FakeConnector.api_allowlist)
+    with pytest.raises(ApiNotAllowedError):
+        await gateway.call(ApiCall("fake", "ListUsers"))
+    assert await gateway.call(ApiCall("fake", "ListRegions"))
+
+
+async def test_calls_seen_by_the_transport_are_all_allowlisted() -> None:
+    from skyline_connectors.base import ApiCall
+    from skyline_connectors.fake.transport import FakeTransport
+    from skyline_core.types import JSON
+
+    seen: list[ApiCall] = []
+
+    class Recording:
+        def __init__(self) -> None:
+            self._inner = FakeTransport(FakeConfig(), _creds(), FakeConnector.api_allowlist)
+
+        async def send(self, api: ApiCall, params: Mapping[str, JSON]) -> Mapping[str, JSON]:
+            seen.append(api)
+            return await self._inner.send(api, params)
+
+    gateway = GuardedGateway(Recording(), FakeConnector.api_allowlist)
+    connector = FakeConnector(gateway=gateway)
+    for scope in await connector.discover_scopes():
+        async for _ in connector.collect(scope):
+            pass
+    assert seen and set(seen) <= FakeConnector.api_allowlist

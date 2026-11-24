@@ -80,7 +80,9 @@ def test_content_hashes_are_stable_and_distinct() -> None:
     hashes = {c.content_hash for c in CHECKS.values()}
     assert len(hashes) == len(CHECKS)
     for check in CHECKS.values():
-        assert content_hash(check.definition) == check.content_hash
+        assert content_hash(check.definition, check.evaluator) == check.content_hash
+        # The evaluator's code is part of the hash: changing it needs a version bump.
+        assert content_hash(check.definition) != check.content_hash
 
 
 def test_admin_without_mfa_is_not_applicable_for_non_admins() -> None:
@@ -140,7 +142,7 @@ def test_engine_isolates_crashing_and_misbehaving_evaluators() -> None:
         (not_json, "evaluator returned evidence that is not JSON"),
         (wrong_type, "evaluator returned an invalid result"),
     ]:
-        check = LoadedCheck(base.definition, base.content_hash, fn)  # type: ignore[arg-type]
+        check = LoadedCheck(base.definition, base.content_hash, fn)
         result = run_check(check, bucket, ctx)
         assert result.status is Status.ERROR
         assert result.evidence == {"reason": reason}

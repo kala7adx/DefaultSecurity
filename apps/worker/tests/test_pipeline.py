@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, insert, select, update
+from worker_helpers import add_fake_integration
 
 from skyline_checks.engine import Result
 from skyline_checks.loader import LoadedCheck
@@ -29,8 +30,6 @@ from skyline_core.queue import ScanPayload, VerifyIntegrationPayload
 from skyline_worker.context import WorkerContext
 from skyline_worker.runner import Worker
 from testsupport import Database, TenantFixture
-
-from .conftest import add_fake_integration
 
 pytestmark = pytest.mark.db
 

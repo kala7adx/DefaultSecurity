@@ -2,7 +2,9 @@
 
 Upserts are idempotent on ``(tenant_id, integration_id, native_id)``, so a retried scan is safe.
 Only scopes that succeeded can mark their unseen assets deleted; a failed scope's data is
-left exactly as it was (ARCHITECTURE §3).
+left exactly as it was (ARCHITECTURE §3). A *rejected* record is not a deleted resource: its
+asset (and its edges) are kept as last seen, and a scope where a rejected record had no
+usable native ID deletes nothing at all.
 """
 
 from __future__ import annotations
@@ -11,9 +13,11 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import Text, all_, and_, bindparam, func, or_, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.sql import ColumnElement
 
 from skyline_connectors.runner import CollectedAsset, ScopeResult
 from skyline_core.db.models import Asset, Relationship
@@ -29,6 +33,8 @@ class StoreStats:
     relationships_skipped: int = 0
     relationships_deleted: int = 0
     records_rejected: int = 0
+    records_duplicate: int = 0
+    scopes_not_deleting: int = 0
 
 
 def _chunks[T](items: Sequence[T], size: int = _BATCH) -> Iterable[Sequence[T]]:
@@ -111,9 +117,15 @@ async def store_results(
     results: Sequence[ScopeResult],
 ) -> StoreStats:
     """Write one scan's results in the caller's tenant transaction."""
-    stats = StoreStats(records_rejected=sum(r.rejected for r in results))
     ok = [r for r in results if r.ok]
-    ok_scopes = [r.scope.id for r in ok]
+    stats = StoreStats(
+        records_rejected=sum(r.rejected for r in results),
+        records_duplicate=sum(r.duplicates for r in ok),
+        scopes_not_deleting=sum(1 for r in ok if r.unsafe_to_delete),
+    )
+    # Scopes allowed to retire what they didn't return, and IDs that must never be retired.
+    deleting_scopes = [r.scope.id for r in ok if not r.unsafe_to_delete]
+    keep_ids = sorted({native_id for r in ok for native_id in r.rejected_ids})
     assets = [a for r in ok for a in r.assets]
     stats.assets_seen = len(assets)
     await _upsert_assets(
@@ -125,15 +137,16 @@ async def store_results(
         assets=assets,
     )
 
-    if ok_scopes:
+    if deleting_scopes:
         deleted = await session.execute(
             update(Asset)
             .where(
                 Asset.tenant_id == tenant_id,
                 Asset.integration_id == integration_id,
-                Asset.scope_id.in_(ok_scopes),
+                Asset.scope_id.in_(deleting_scopes),
                 Asset.last_seen_scan_id != scan_run_id,
                 Asset.deleted_at.is_(None),
+                _not_in(Asset.native_id, keep_ids),
             )
             .values(deleted_at=func.now())
             .returning(Asset.id)
@@ -181,9 +194,15 @@ async def store_results(
         tenant_id=tenant_id,
         integration_id=integration_id,
         scan_run_id=scan_run_id,
-        ok_scopes=ok_scopes,
+        deleting_scopes=deleting_scopes,
+        keep_ids=keep_ids,
     )
     return stats
+
+
+def _not_in(column: InstrumentedAttribute[str], values: Sequence[str]) -> ColumnElement[bool]:
+    """``column <> ALL(:values)`` with one array parameter (no 32k bind-parameter limit)."""
+    return column != all_(bindparam(None, list(values), type_=ARRAY(Text)))
 
 
 async def _retire_relationships(
@@ -192,14 +211,16 @@ async def _retire_relationships(
     tenant_id: UUID,
     integration_id: UUID,
     scan_run_id: UUID,
-    ok_scopes: Sequence[str],
+    deleting_scopes: Sequence[str],
+    keep_ids: Sequence[str],
 ) -> int:
-    """Edges belong to the scope of their source asset. Retire unseen ones in successful scopes,
-    and any edge whose endpoint no longer exists."""
+    """Edges belong to the scope of their source asset. Retire unseen ones in scopes allowed to
+    delete (except edges of rejected sources), and any edge whose endpoint no longer exists."""
     ok_sources = select(Asset.id).where(
         Asset.tenant_id == tenant_id,
         Asset.integration_id == integration_id,
-        Asset.scope_id.in_(ok_scopes),
+        Asset.scope_id.in_(deleting_scopes),
+        _not_in(Asset.native_id, keep_ids),
     )
     gone = select(Asset.id).where(
         Asset.tenant_id == tenant_id,

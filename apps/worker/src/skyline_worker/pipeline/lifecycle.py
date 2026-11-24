@@ -4,7 +4,8 @@ new -> still_open -> auto_resolved -> reopened (ARCHITECTURE §3). Rules that ke
 correct:
 
 * only an explicit ``pass`` resolves a finding; ``error`` and ``not_applicable`` never do;
-* assets in scopes that failed this scan are not evaluated, so their findings stay as they are;
+* only assets seen in *this* scan are evaluated. Anything else is stale (its scope failed, or
+  its record was rejected this time) and its findings stay exactly as they are;
 * an asset deleted from a successful scope resolves its open findings.
 """
 
@@ -44,6 +45,7 @@ class LifecycleStats:
     still_open: int = 0
     reopened: int = 0
     resolved: int = 0
+    skipped_stale: int = 0
 
 
 def _view(asset: Asset) -> AssetView:
@@ -135,8 +137,9 @@ async def apply_findings(
     }
     for evaluation in evaluate(checks, graph, provider=provider):
         asset = assets[evaluation.asset.id]
-        if asset.scope_id in failed_scopes:
-            continue  # stale data: leave findings untouched
+        if asset.last_seen_scan_id != scan_run_id or asset.scope_id in failed_scopes:
+            stats.skipped_stale += 1
+            continue  # not seen in this scan: leave its findings untouched
         stats.evaluated += 1
         status = evaluation.result.status
         finding = existing.get((asset.id, evaluation.check_id))
@@ -165,7 +168,11 @@ async def apply_findings(
         else:
             stats.not_applicable += 1
     stats.resolved += await _resolve_deleted_assets(
-        session, tenant_id=tenant_id, integration_id=integration_id, scan_run_id=scan_run_id
+        session,
+        tenant_id=tenant_id,
+        integration_id=integration_id,
+        scan_run_id=scan_run_id,
+        failed_scopes=failed_scopes,
     )
     return stats
 
@@ -242,12 +249,18 @@ async def _resolve(session: AsyncSession, finding: Finding, scan_run_id: UUID) -
 
 
 async def _resolve_deleted_assets(
-    session: AsyncSession, *, tenant_id: UUID, integration_id: UUID, scan_run_id: UUID
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    integration_id: UUID,
+    scan_run_id: UUID,
+    failed_scopes: Collection[str],
 ) -> int:
     gone = select(Asset.id).where(
         Asset.tenant_id == tenant_id,
         Asset.integration_id == integration_id,
         Asset.deleted_at.is_not(None),
+        Asset.scope_id.not_in(list(failed_scopes)),
     )
     findings = (
         (

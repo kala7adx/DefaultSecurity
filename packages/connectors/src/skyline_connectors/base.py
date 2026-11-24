@@ -119,7 +119,16 @@ class ConnectorError(Exception):
         super().__init__(self.safe_message)
 
 
-class ApiNotAllowedError(ConnectorError):
+class ReadOnlyGuardError(Exception):
+    """The read-only guard stopped a call. Deliberately **not** a :class:`ConnectorError`:
+    connector code that catches ``ConnectorError`` (say, AccessDenied on one bucket) must
+    not be able to swallow it. The gateway also records every violation, so a violation is
+    seen even if a connector catches ``Exception``."""
+
+    safe_message: str = "the connector attempted an API call outside its read-only allowlist"
+
+
+class ApiNotAllowedError(ReadOnlyGuardError):
     """A connector tried to call an API that is not in its read-only allowlist."""
 
     def __init__(self, api: ApiCall) -> None:

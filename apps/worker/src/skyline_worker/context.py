@@ -15,6 +15,10 @@ from skyline_core.crypto import SecretOpener
 from skyline_core.queue import JobQueue
 
 
+class PermanentJobError(RuntimeError):
+    """A job failure that retrying can't fix (e.g. a read-only violation)."""
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -29,3 +33,5 @@ class WorkerContext:
     clock: Callable[[], datetime] = utcnow
     gateway_limits: GatewayLimits = field(default_factory=GatewayLimits)
     runner_limits: RunnerLimits = field(default_factory=RunnerLimits)
+    #: Whether demo-only providers (``fake``) may run (development, or explicitly enabled).
+    demo_providers_allowed: bool = False

@@ -49,8 +49,8 @@ def _gateway(transport: ScriptedTransport, sleeps: Sleeps, **limits: float) -> G
     return GuardedGateway(
         transport,
         frozenset({LIST}),
-        GatewayLimits(**limits),
-        sleep=sleeps,  # type: ignore[arg-type]
+        GatewayLimits(**limits),  # type: ignore[arg-type]
+        sleep=sleeps,
     )
 
 

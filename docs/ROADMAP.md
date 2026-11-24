@@ -91,6 +91,13 @@ Acceptance criteria:
 
 Status: Not started. ADR-0011 holds the onboarding design.
 
+Entry gate (from the Phase 0 worker re-review), before the first real collector ships:
+- [ ] Persist results per scope (not one final transaction per scan) and move check
+      evaluation off the event loop (`asyncio.to_thread` or chunked with `sleep(0)`).
+- [ ] A cross-tenant sweep for scan runs left active without a live job, plus a partial index
+      on `jobs (kind, status, finished_at)` for the sweeper.
+- [ ] Policy for assets in scopes that disappear from discovery (today they are kept).
+
 Acceptance criteria:
 - [ ] Single-source policy (`deploy/onboarding/aws/policy/`) renders:
   - [ ] the CloudFormation single-account template

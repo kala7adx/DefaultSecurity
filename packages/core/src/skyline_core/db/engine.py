@@ -47,7 +47,9 @@ def create_engine(settings: CoreSettings, *, application_name: str) -> AsyncEngi
                 "search_path": SCHEMA,
                 "statement_timeout": str(settings.db_statement_timeout_ms),
                 "lock_timeout": "10000",
-                "idle_in_transaction_session_timeout": "60000",
+                "idle_in_transaction_session_timeout": str(
+                    settings.db_idle_in_transaction_timeout_ms
+                ),
             },
         },
     )

@@ -84,7 +84,7 @@ extend-immutable-calls = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests: plain asserts, literal comparison values and generated test-only credentials are fine.
-"**/tests/**" = ["S101", "PLR2004", "S105", "S106", "PLC0415"]
+"**/tests/**" = ["S101", "PLR2004", "S105", "S106", "PLC0415", "PLR0915"]
 "conftest.py" = ["S101", "PLR2004", "PLC0415"]
 # Alembic migrations hold static DDL only (no input reaches these strings).
 "**/migrations/versions/*.py" = ["E501", "S608"]
@@ -125,7 +125,7 @@ warn_required_dynamic_aliases = true
 # ---------------------------------------------------------------- pytest / coverage
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
-pythonpath = ["."]
+pythonpath = [".", "apps/api/tests", "apps/worker/tests"]
 testpaths = [
     "packages/core/tests",
     "packages/connectors/tests",

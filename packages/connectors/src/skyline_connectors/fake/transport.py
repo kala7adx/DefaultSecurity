@@ -10,7 +10,13 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import Any, Final
 
-from skyline_connectors.base import ApiCall, AuthenticationError, ConnectorError, ScopeError
+from skyline_connectors.base import (
+    ApiCall,
+    ApiNotAllowedError,
+    AuthenticationError,
+    ConnectorError,
+    ScopeError,
+)
 from skyline_connectors.fake.dataset import ACCOUNT_ID, REGIONS, FakeCloud
 from skyline_connectors.fake.models import FakeConfig, FakeCredentials
 from skyline_core.types import JSON
@@ -22,7 +28,10 @@ _PAGE_SIZE: Final = 1  # tiny pages so pagination is exercised
 class FakeTransport:
     """Implements :class:`skyline_connectors.gateway.Transport` for the fake cloud."""
 
-    def __init__(self, config: FakeConfig, credentials: FakeCredentials) -> None:
+    def __init__(
+        self, config: FakeConfig, credentials: FakeCredentials, allowlist: frozenset[ApiCall]
+    ) -> None:
+        self._allowlist = allowlist
         self._cloud = FakeCloud(config.simulate_fixes)
         self._failing: set[str] = set(config.fail_scopes)
         self._api_key = credentials.api_key
@@ -39,6 +48,8 @@ class FakeTransport:
         }
 
     async def send(self, api: ApiCall, params: Mapping[str, JSON]) -> Mapping[str, JSON]:
+        if api not in self._allowlist:  # second, independent check (ADR-0005)
+            raise ApiNotAllowedError(api)
         if api.service != SERVICE:
             msg = "unknown service"
             raise ConnectorError(msg)

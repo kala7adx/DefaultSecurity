@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import func, select, text
+from worker_helpers import KEYS
 
 from skyline_checks.loader import LoadedCheck
 from skyline_core.crypto import SecretSealer, create_kek_file
@@ -21,11 +22,9 @@ from skyline_core.settings import Environment
 from skyline_frameworks.loader import load_frameworks
 from skyline_worker.bootstrap import BootstrapError, bootstrap, normalise_email
 from skyline_worker.catalogue import CatalogueSyncError, control_id, sync_catalogue
-from skyline_worker.migrate import migrate
+from skyline_worker.migrate import MigrateLockTimeoutError, migrate, migrate_lock
 from skyline_worker.settings import MigrateSettings
 from testsupport import Database, fresh_database
-
-from .conftest import KEYS
 
 pytestmark = pytest.mark.db
 
@@ -145,6 +144,57 @@ async def test_migrate_end_to_end_on_a_fresh_database(
             ).all()
         assert len(rows) == 1
         assert verify_password(rows[0].password_hash, password)
+
+
+async def test_bootstrap_is_all_or_nothing(
+    db: Database, postgres_container: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import skyline_worker.bootstrap as bootstrap_module
+
+    kek = tmp_path / "kek.json"
+    create_kek_file(kek)
+    async with fresh_database(
+        db,
+        name="skyline_migrate_atomic",
+        superuser=postgres_container.username,
+        superuser_password=postgres_container.password,
+    ) as fresh:
+        settings = MigrateSettings(
+            env=Environment.TEST,
+            db_host=fresh.host,
+            db_port=fresh.port,
+            db_name=fresh.name,
+            db_password=SecretStr(db.passwords["skyline_owner"]),
+            db_sslmode="disable",
+            local_kek_file=kek,
+            bootstrap_admin_password=SecretStr(secrets.token_urlsafe(18)),
+        )
+
+        async def broken(*_: object, **__: object) -> None:
+            raise RuntimeError("simulated failure after the tenant insert")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(bootstrap_module, "create_redaction_key", broken)
+            with pytest.raises(RuntimeError, match="simulated"):
+                await migrate(settings)
+        async with system_scope(fresh.factory("skyline_owner")) as session:
+            tenants = (await session.execute(select(func.count()).select_from(Tenant))).scalar()
+            users = (await session.execute(select(func.count()).select_from(User))).scalar()
+        assert (tenants, users) == (0, 0)  # nothing half-created for a re-run to skip
+        await migrate(settings)
+        async with system_scope(fresh.factory("skyline_owner")) as session:
+            tenants = (await session.execute(select(func.count()).select_from(Tenant))).scalar()
+        assert tenants == 1
+
+
+async def test_migrate_lock_serialises_runs(db: Database) -> None:
+    engine = db.engine("skyline_owner")
+    async with migrate_lock(engine):
+        with pytest.raises(MigrateLockTimeoutError):
+            async with migrate_lock(engine, wait_seconds=0.1):
+                pass  # pragma: no cover - never entered
+    async with migrate_lock(engine, wait_seconds=0.1):
+        pass  # released again
 
 
 async def test_migrate_requires_a_bootstrap_password_on_first_run(

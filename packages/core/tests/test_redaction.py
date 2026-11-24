@@ -268,7 +268,9 @@ def test_long_strings_are_truncated_in_logs_and_marked_in_config() -> None:
     assert len(str(redact_for_log(long_text))) < 9_000
     marker = redact_raw_config({"blob": "y" * 40_000}, rules=RedactionRules(), hmac_key=b"k" * 32)
     assert isinstance(marker, dict)
-    assert marker["blob"]["redacted"] is True  # type: ignore[index]
+    blob = marker["blob"]
+    assert isinstance(blob, dict)
+    assert blob["redacted"] is True
 
 
 SECRET_ARN = "arn:aws:secretsmanager:eu-west-2:123456789012:secret:prod-db-AbCdEf"

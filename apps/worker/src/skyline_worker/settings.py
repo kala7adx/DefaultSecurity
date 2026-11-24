@@ -19,6 +19,9 @@ class WorkerSettings(CoreSettings):
     poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
     scheduler_seconds: float = Field(default=60.0, ge=5, le=3600)
     reaper_seconds: float = Field(default=30.0, ge=5, le=3600)
+    sweeper_seconds: float = Field(default=300.0, ge=30, le=3600)
+    # Evaluation between statements can be CPU-heavy on large tenants: allow longer gaps.
+    db_idle_in_transaction_timeout_ms: int = Field(default=300_000, ge=1_000, le=3_600_000)
     heartbeat_file: Path | None = Path("/tmp/skyline-worker-heartbeat")  # noqa: S108 - tmpfs
 
 
