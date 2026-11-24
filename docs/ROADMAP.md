@@ -50,42 +50,51 @@ Status values: `Not started` · `Planning` · `In progress` · `Done` · `Blocke
 
 ## Phase 0: Foundations
 
-Status: **In progress**. Design docs written 2026-11-23 and awaiting owner review before the
-walking skeleton.
+Status: **Done** (2026-11-24). Every slice was reviewed by the `security-reviewer` agent and
+its findings fixed (docs/reviews/). The Definition of Done ran end to end on the Compose stack
+(`deploy/compose/smoke_test.py`). The CI workflows are written but have not run on GitHub yet
+(nothing pushed); their checks all passed locally: lint, types, tests with coverage gates,
+pip-audit, both licence gates, gitleaks (history), semgrep, Trivy (images and config) and the
+web build. CodeQL and Scorecard only run on GitHub.
 
 Acceptance criteria:
 - [x] Machine toolchain verified: git, gh, Docker engine, uv, Node LTS, pnpm, pre-commit.
 - [x] `docs/ARCHITECTURE.md`, `docs/adr/0001–0012`, `docs/THREAT_MODEL.md` and
       `docs/ROADMAP.md` written.
-- [ ] Owner approves the design docs.
-- [ ] Monorepo scaffold (uv + pnpm workspaces), pre-commit (ruff, gitleaks, EOF, yaml…),
+- [x] Owner approves the design docs.
+- [x] Monorepo scaffold (uv + pnpm workspaces), pre-commit (ruff, gitleaks, EOF, yaml…),
       `.editorconfig`, `.gitattributes`, README with a 5-minute quickstart, LICENSE
       (Apache-2.0), THIRD_PARTY.md, SECURITY.md, CONTRIBUTING.md, CODEOWNERS.
-- [ ] `packages/core`: settings, redaction logger, async DB, Alembic initial schema, RLS + DB
+- [x] `packages/core`: settings, redaction logger, async DB, Alembic initial schema, RLS + DB
       roles, audit log, local KeyProvider + envelope encryption.
-- [ ] `packages/connectors`: protocol, `ApiGateway`, allowlist + a test failing on undeclared
+- [x] `packages/connectors`: protocol, `ApiGateway`, allowlist + a test failing on undeclared
       calls, deterministic `fake` connector.
-- [ ] `packages/checks`: schema, loader, engine; 5 checks with pass/fail fixtures.
-- [ ] `packages/frameworks`: catalogue format; Cyber Essentials v3.3 + ISO 27001:2022 stub
+- [x] `packages/checks`: schema, loader, engine; 5 checks with pass/fail fixtures.
+- [x] `packages/frameworks`: catalogue format; Cyber Essentials v3.3 + ISO 27001:2022 stub
       mappings (`reviewed: false`).
-- [ ] `apps/worker`: scheduler + job runner; collect → evaluate → upsert; lifecycle new /
+- [x] `apps/worker`: scheduler + job runner; collect → evaluate → upsert; lifecycle new /
       still_open / auto_resolved / reopened.
-- [ ] `apps/api`:
-  - [ ] health/readiness, bootstrap admin, opaque sessions (SameSite=Lax + CSRF), RBAC
-  - [ ] integrations, scans, assets, findings filters, exceptions, audit log
-- [ ] `apps/web`: login, dashboard, findings table + drawer, assets, integrations.
-- [ ] `deploy/compose`: postgres, migrate, api, worker, web. Non-root, read-only FS,
+- [x] `apps/api`:
+  - [x] health/readiness, bootstrap admin, opaque sessions (SameSite=Lax + CSRF), RBAC
+  - [x] integrations, scans, assets, findings filters, exceptions, audit log
+- [x] `apps/web`: login, dashboard, findings table + drawer, assets, integrations.
+- [x] `deploy/compose`: postgres, migrate, api, worker, web. Non-root, read-only FS,
       healthchecks.
-- [ ] CI:
-  - [ ] lint, types, tests + coverage, gitleaks, bandit, semgrep, CodeQL, pip-audit, pnpm audit,
+- [x] CI:
+  - [x] lint, types, tests + coverage, gitleaks, bandit (ruff S rules), semgrep, CodeQL, pip-audit, pnpm audit,
         licence gate, Docker build + Trivy, SBOM, e2e
-  - [ ] Dependabot, Scorecard; actions SHA-pinned
-- [ ] **DoD:**
-  - [ ] `docker compose up --build` from a clean clone → log in → scan the fake connector → 5
+  - [x] Dependabot, Scorecard; actions SHA-pinned
+- [x] **DoD:**
+  - [x] `docker compose up --build` from a clean clone → log in → scan the fake connector → 5
         findings with Cyber Essentials / ISO mappings
-  - [ ] "fix" a fake resource → rescan → auto-resolved
-  - [ ] a deep link from another site opens logged in
-  - [ ] all tests and CI checks pass locally; no secrets; no real cloud calls
+  - [x] "fix" a fake resource → rescan → auto-resolved
+  - [x] a deep link from another site opens logged in
+  - [x] all tests and CI checks pass locally; no secrets; no real cloud calls
+
+Carried into Phase 1: the entry gate above Phase 1's criteria (per-scope persistence,
+evaluation off the event loop, orphan-run sweep, vanished-scope policy), known-device login
+bypass (THREAT_MODEL R9), a scan cooldown per integration, and running the Playwright browser
+spec in CI.
 
 ## Phase 1: AWS connector, onboarding, CIS AWS checks
 

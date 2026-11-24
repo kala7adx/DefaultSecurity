@@ -92,7 +92,9 @@ docs/                PRODUCT_BRIEF, ARCHITECTURE, THREAT_MODEL, ROADMAP, adr/
 - Keep this file short. Put detail in `docs/`. Update `docs/ROADMAP.md` status as phases complete.
 
 ## Common commands (keep updated as the repo grows)
-- `docker compose -f deploy/compose/docker-compose.yml up --build` — run everything locally
-- `uv run pytest` — backend tests
-- `uv run ruff check . && uv run mypy packages` — lint + types
-- `pnpm --dir apps/web lint && pnpm --dir apps/web test` — frontend checks
+- `docker compose -f deploy/compose/docker-compose.yml up --build -d --wait` — run everything
+  locally (README: reading the bootstrap password); `... down -v` resets it
+- `uv run python deploy/compose/smoke_test.py` — end-to-end check on a throwaway stack
+- `uv run pytest` — backend tests (Docker needed; coverage gates in CI)
+- `uv run ruff check . && uv run mypy && uv run mypy packages` — lint + types
+- `pnpm --dir apps/web lint && pnpm --dir apps/web typecheck && pnpm --dir apps/web test` — frontend
