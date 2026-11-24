@@ -32,7 +32,8 @@ def head_revision() -> str | None:
 async def upgrade_to_head(engine: AsyncEngine) -> None:
     """Create the schema if needed and apply all migrations (run as ``skyline_owner``)."""
     async with engine.begin() as conn:
-        await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
+        # SCHEMA is a module constant; DDL identifiers can't be bound parameters.
+        await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))  # nosemgrep
     async with engine.connect() as conn:
         await conn.run_sync(lambda sync: command.upgrade(alembic_config(sync), "head"))
         await conn.commit()
