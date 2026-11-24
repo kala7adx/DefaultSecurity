@@ -1,2 +1,17 @@
 packages:
   - apps/web
+
+# Supply-chain policies (ADR-0010): no versions younger than 3 days, no trust downgrades
+# (a release losing provenance), no git/tarball sub-dependencies.
+# 3 days as an install-time floor; Dependabot (7-day cooldown) governs normal updates.
+minimumReleaseAge: 4320 # nosemgrep: pnpm-minimum-release-age
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+# sharp (libvips, LGPL-3.0) is an optional Next.js dependency for next/image optimisation,
+# which Skyline does not use (images.unoptimized). Licence policy: ADR-0010.
+ignoredOptionalDependencies:
+  - sharp
+# Reviewed 2026-11-24: same long-standing maintainer as 3.10.0, registry-signed, published
+# 2025-04-21, dev-only (Next.js ESLint config). Neither 3.10.x carries provenance.
+trustPolicyExclude:
+  - eslint-import-resolver-typescript@3.10.1
