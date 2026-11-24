@@ -218,7 +218,7 @@ def _csrf_ok(request: Request, svc: Services, principal: Principal) -> bool:
     cookie = request.cookies.get(CSRF_COOKIE, "")
     expected = csrf_token(svc, principal.session_id)
     return (
-        bool(header)
+        bool(header)  # nosemgrep: nan-injection - string truthiness, no float parsing
         and constant_time_equals(header, cookie)
         and constant_time_equals(header, expected)
     )

@@ -154,7 +154,8 @@ async def fresh_database(
         hide_parameters=True,
     )
     async with admin.connect() as conn:
-        await conn.execute(text(f'CREATE DATABASE "{name}" OWNER skyline_owner'))
+        # Test-only; ``name`` is a literal chosen by the test. Identifiers can't be bound.
+        await conn.execute(text(f'CREATE DATABASE "{name}" OWNER skyline_owner'))  # nosemgrep
     fresh = Database(host=db.host, port=db.port, passwords=db.passwords, name=name)
     try:
         yield fresh
