@@ -363,7 +363,14 @@ Notes:
 - Roles are a code enum in Phase 0. A custom-role table can come later via an ADR.
   `notification_rules` arrives in Phase 9.
 - `login_attempts` is global because it is pre-authentication. It is keyed by an HMAC of the
-  normalised email and by IP, and is reachable only through `SECURITY DEFINER` functions (§8).
+  normalised email and of the IP bucket (IPv6 /64), and is reachable only through `SECURITY
+  DEFINER` functions (§8): `begin_login_attempt` takes non-blocking per-subject advisory locks,
+  counts recent failures and reserves the attempt as a failure in one step (so parallel
+  requests can't overrun the budget); `finish_login_attempt` marks it succeeded or cancels it.
+  Failure audit rows are written after the response so timing doesn't reveal known emails.
+- Client IPs: `SKYLINE_TRUSTED_PROXY_HOPS` counts only proxies that *append* to
+  X-Forwarded-For (an ALB or edge proxy; the Next.js server passes the header through and
+  doesn't count). Production must set it explicitly.
 
 ## 5. Connector plugin interface
 

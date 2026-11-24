@@ -29,7 +29,10 @@ notifications open logged-in**. Those are cross-site top-level navigations, whic
     `HMAC(server_key, session_id)`, so it can't be planted or reused across sessions.
   - Unsafe methods also need an `Origin` header matching the configured public origin, and
     requests with `Sec-Fetch-Site: cross-site` are rejected.
-  - Login has its own pre-session CSRF token plus the `Origin` check, against login CSRF.
+  - Login CSRF (amended 2026-11-24 after the Phase 0 API review): there is no pre-session
+    token. Login is blocked cross-site by the `Origin` check, the `Sec-Fetch-Site` check and a
+    JSON-only body (a cross-site form can only send `text/plain`, `urlencoded` or `multipart`,
+    which return 422). Revisit if login ever accepts form posts or an SSO callback.
 - **Deep links:** unauthenticated requests go to `/login?next=<path>`. `next` must be a
   same-origin relative path: it must start with a single `/`, not `//` or `/\`, contain no scheme
   or control characters, and is checked again after URL-decoding. Anything else becomes `/`.

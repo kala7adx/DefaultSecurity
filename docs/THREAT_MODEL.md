@@ -90,7 +90,7 @@ flowchart LR
 |---|---|---|---|---|---|
 | T1.1 | S | Credential stuffing / brute force on login | argon2id; Postgres-backed per-account and per-IP throttling (≤ 10 attempts / 5 min default); generic errors; audit of failures; WAF rate rule in AWS; OIDC SSO + MFA via IdP | 0, 4, 9 | Designed |
 | T1.2 | S | Session hijack / fixation | 256-bit opaque token, `__Host-` HttpOnly Secure cookie, hash at rest, new session on login, idle 30 min / absolute 12 h, revoke on logout and password change (ADR-0008) | 0 | Designed |
-| T1.3 | T | CSRF, made more likely by `SameSite=Lax` | Safe methods never change state (route test); double-submit CSRF token HMAC-bound to the session; `Origin` check; reject `Sec-Fetch-Site: cross-site` on unsafe methods; login CSRF token | 0 | Designed |
+| T1.3 | T | CSRF, made more likely by `SameSite=Lax` | Safe methods never change state (route test); double-submit CSRF token HMAC-bound to the session; `Origin` check; reject `Sec-Fetch-Site: cross-site` on unsafe methods; login is JSON-only (ADR-0008) | 0 | Designed |
 | T1.4 | S/I | Open redirect via `next` on deep links (phishing, E8) | Only same-origin relative paths; rejects `//`, `/\`, schemes and encoded variants; tests | 0 | Designed |
 | T1.5 | T/I | Stored XSS from hostile resource names, tags or evidence (E4) | React escaping only; no `dangerouslySetInnerHTML`; nonce CSP with `strict-dynamic`, `object-src 'none'`, `base-uri 'none'`, `frame-ancestors 'none'`; links from resource data limited to an `https:` allowlist | 0 | Designed |
 | T1.6 | I | Sensitive data cached in browser or proxies | `Cache-Control: no-store` on API; `Referrer-Policy: no-referrer`; no tokens in URLs (except the documented onboarding token, T6.2) | 0 | Designed |
@@ -220,6 +220,8 @@ flowchart LR
 | R5 | One multi-tenant Entra app credential reaches all M365 customers | Inherent to one-click consent; key kept non-exportable in KMS / Key Vault (T5.7) | Phase 2 |
 | R6 | Secure cookies over `http://localhost` in local Compose | Browsers treat localhost as secure; Compose binds to 127.0.0.1 only | — |
 | R7 | Python can't guarantee zeroing key material in memory | Best-effort `bytearray` zeroing; short-lived worker processes; no swap in containers | — |
+| R8 | Local KEK: the API process can unwrap DEKs; encrypt-only is enforced by DB grants, not cryptography (T3.6) | KMS key policy makes it cryptographic; a public-key wrap for the local provider is possible later | Phase 4 |
+| R9 | An attacker can keep a known account locked (10 bad passwords per 5 min) | Cyber Essentials requires the lockout; per-IP limits and audit rows make it visible; known-device bypass or progressive delays later | Phase 1 |
 
 ## 7. Assumptions
 

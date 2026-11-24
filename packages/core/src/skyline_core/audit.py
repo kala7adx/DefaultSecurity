@@ -6,6 +6,7 @@ the action itself so the two can't diverge. ``details`` are redacted and size-ca
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 from collections.abc import Mapping
@@ -31,6 +32,8 @@ class AuditAction(StrEnum):
     LOGIN_THROTTLED = "auth.login.throttled"
     LOGOUT = "auth.logout"
     PASSWORD_CHANGED = "auth.password.changed"  # noqa: S105 - an action name, not a secret
+    PASSWORD_CHANGE_FAILED = "auth.password.change_failed"  # noqa: S105 - action name
+    PASSWORD_CHANGE_THROTTLED = "auth.password.change_throttled"  # noqa: S105
     PERMISSION_DENIED = "authz.denied"
     CSRF_REJECTED = "authz.csrf_rejected"
     INTEGRATION_CREATED = "integration.created"
@@ -56,7 +59,12 @@ def _sanitise_details(details: Mapping[str, object] | None) -> dict[str, object]
     assert isinstance(cleaned, dict)  # noqa: S101 - redact_for_log maps dicts to dicts
     encoded = json.dumps(cleaned, default=str)
     if len(encoded.encode()) > _MAX_DETAILS_BYTES:
-        return {"truncated": True}
+        # Keep what changed and a fingerprint of the full details, not just a flag.
+        return {
+            "truncated": True,
+            "keys": sorted(str(k) for k in cleaned)[:50],
+            "sha256": hashlib.sha256(encoded.encode()).hexdigest(),
+        }
     result: dict[str, object] = json.loads(encoded)
     return result
 

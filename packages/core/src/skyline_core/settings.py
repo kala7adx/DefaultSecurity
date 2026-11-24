@@ -163,5 +163,6 @@ def validate_origin(value: str) -> str:
     if parts.path not in {"", "/"} or parts.query or parts.fragment or parts.username:
         msg = "origin must not contain a path, query, fragment or credentials"
         raise ValueError(msg)
-    port = f":{parts.port}" if parts.port else ""
+    default = {"http": 80, "https": 443}[parts.scheme]
+    port = f":{parts.port}" if parts.port and parts.port != default else ""
     return f"{parts.scheme}://{parts.hostname}{port}"

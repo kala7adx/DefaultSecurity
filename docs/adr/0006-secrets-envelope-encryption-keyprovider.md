@@ -50,6 +50,10 @@ resort, and HMAC keys.
 - A database dump alone reveals no secrets. With KMS, it also needs the worker's KMS identity.
 - The local provider puts the KEK on the same host as the database. That's acceptable for dev
   and small single-VM installs, and documented as a residual risk with KMS as the mitigation.
+- With the local provider, "API encrypt-only" is a database rule (the API role can't SELECT
+  ciphertext), not a cryptographic one: the API process loads the same KEK and could unwrap.
+  Only KMS (or a public-key wrap for the local provider) makes the split cryptographic.
+  Recorded as residual risk R8.
 - More moving parts than a single app-level key, but each piece is small and tested: tamper,
   wrong-AAD, wrong-tenant and unknown-key_id cases.
 

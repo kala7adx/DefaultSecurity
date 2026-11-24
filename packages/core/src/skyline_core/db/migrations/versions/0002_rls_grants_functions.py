@@ -129,14 +129,90 @@ FUNCTIONS: dict[str, str] = {
         END
         $$
     """,
-    "record_login_attempt(text,bytea,boolean)": f"""
-        CREATE FUNCTION skyline.record_login_attempt(
-            p_subject_type text, p_subject_hash bytea, p_succeeded boolean)
-        RETURNS void
-        LANGUAGE sql VOLATILE {DEFINER}
+    # Throttling is check-and-reserve in one step (API review H1): the subject locks make the
+    # count and the reservation atomic, so parallel requests can't all pass the check while
+    # the password is being hashed. The reservation counts as a failure until finished.
+    "begin_login_attempt(bytea,integer,bytea,integer,interval)": f"""
+        CREATE FUNCTION skyline.begin_login_attempt(
+            p_account bytea, p_account_limit integer, p_ip bytea, p_ip_limit integer,
+            p_window interval)
+        RETURNS TABLE (allowed boolean, retry_after integer, attempt_ids bigint[])
+        LANGUAGE plpgsql VOLATILE {DEFINER}
         AS $$
+        DECLARE
+            v_window interval := LEAST(p_window, interval '1 day');
+            v_failures integer;
+            v_oldest timestamptz;
+            v_ids bigint[] := ARRAY[]::bigint[];
+            v_id bigint;
+        BEGIN
+            -- Each statement must see rows committed while we waited for the locks.
+            IF current_setting('transaction_isolation') <> 'read committed' THEN
+                RAISE EXCEPTION 'begin_login_attempt needs READ COMMITTED' USING ERRCODE = '25001';
+            END IF;
+            IF p_account IS NULL OR coalesce(p_account_limit, 0) < 1
+               OR (p_ip IS NOT NULL AND coalesce(p_ip_limit, 0) < 1) THEN
+                RAISE EXCEPTION 'subjects need positive limits' USING ERRCODE = '22023';
+            END IF;
+            -- Fixed order (account, then IP) keeps concurrent callers deadlock-free.
+            -- Never queue: a subject that is busy right now is told to retry in a second,
+            -- so floods can't pile up waiters holding database connections.
+            IF NOT pg_try_advisory_xact_lock(
+                    hashtextextended('skyline.login.account:' || encode(p_account, 'hex'), 0))
+               OR (p_ip IS NOT NULL AND NOT pg_try_advisory_xact_lock(
+                    hashtextextended('skyline.login.ip:' || encode(p_ip, 'hex'), 0))) THEN
+                RETURN QUERY SELECT false, 1, ARRAY[]::bigint[];
+                RETURN;
+            END IF;
+            SELECT f.failures, f.oldest INTO v_failures, v_oldest
+              FROM skyline.recent_login_failures('account', p_account, v_window, true) f;
+            IF v_failures >= p_account_limit THEN
+                RETURN QUERY SELECT false, GREATEST(1, ceil(extract(epoch FROM
+                    v_oldest + v_window - clock_timestamp()))::integer), ARRAY[]::bigint[];
+                RETURN;
+            END IF;
+            IF p_ip IS NOT NULL THEN
+                SELECT f.failures, f.oldest INTO v_failures, v_oldest
+                  FROM skyline.recent_login_failures('ip', p_ip, v_window, false) f;
+                IF v_failures >= p_ip_limit THEN
+                    RETURN QUERY SELECT false, GREATEST(1, ceil(extract(epoch FROM
+                        v_oldest + v_window - clock_timestamp()))::integer), ARRAY[]::bigint[];
+                    RETURN;
+                END IF;
+            END IF;
             INSERT INTO skyline.login_attempts (subject_type, subject_hash, succeeded)
-            VALUES (p_subject_type, p_subject_hash, p_succeeded)
+            VALUES ('account', p_account, false) RETURNING id INTO v_id;
+            v_ids := v_ids || v_id;
+            IF p_ip IS NOT NULL THEN
+                INSERT INTO skyline.login_attempts (subject_type, subject_hash, succeeded)
+                VALUES ('ip', p_ip, false) RETURNING id INTO v_id;
+                v_ids := v_ids || v_id;
+            END IF;
+            RETURN QUERY SELECT true, 0, v_ids;
+        END
+        $$
+    """,
+    # 'succeeded' flips a reservation (a success resets the account budget); 'cancelled'
+    # drops it (the request never got to check a password); 'failed' keeps it as is. Only
+    # recent rows can change.
+    "finish_login_attempt(bigint[],text)": f"""
+        CREATE FUNCTION skyline.finish_login_attempt(p_ids bigint[], p_outcome text)
+        RETURNS void
+        LANGUAGE plpgsql VOLATILE {DEFINER}
+        AS $$
+        BEGIN
+            IF p_outcome = 'succeeded' THEN
+                UPDATE skyline.login_attempts SET succeeded = true
+                 WHERE id = ANY(p_ids) AND NOT succeeded
+                   AND at > now() - interval '15 minutes';
+            ELSIF p_outcome = 'cancelled' THEN
+                DELETE FROM skyline.login_attempts
+                 WHERE id = ANY(p_ids) AND NOT succeeded
+                   AND at > now() - interval '15 minutes';
+            ELSIF p_outcome IS DISTINCT FROM 'failed' THEN
+                RAISE EXCEPTION 'unknown outcome' USING ERRCODE = '22023';
+            END IF;
+        END
         $$
     """,
     "recent_login_failures(text,bytea,interval,boolean)": f"""
@@ -192,6 +268,11 @@ FUNCTIONS: dict[str, str] = {
                 RETURN NEW;
             END IF;
             IF TG_OP = 'UPDATE' THEN
+                IF NEW.credential_secret_id IS NOT NULL
+                   AND NEW.credential_secret_id IS DISTINCT FROM OLD.credential_secret_id THEN
+                    RAISE EXCEPTION 'an integration credential can only be removed'
+                        USING ERRCODE = '42501';
+                END IF;
                 IF OLD.status = 'connected' AND NEW.config IS DISTINCT FROM OLD.config THEN
                     NEW.status := 'verifying';
                 END IF;
@@ -247,8 +328,10 @@ FUNCTION_GRANTS: dict[str, tuple[str, ...]] = {
     "auth_lookup_user(text)": ("skyline_api",),
     "resolve_session(bytea,interval)": ("skyline_api",),
     "change_password(bytea,text,interval)": ("skyline_api",),
-    "record_login_attempt(text,bytea,boolean)": ("skyline_api",),
-    "recent_login_failures(text,bytea,interval,boolean)": ("skyline_api",),
+    "begin_login_attempt(bytea,integer,bytea,integer,interval)": ("skyline_api",),
+    "finish_login_attempt(bigint[],text)": ("skyline_api",),
+    # Internal helper of begin_login_attempt: no direct callers.
+    "recent_login_failures(text,bytea,interval,boolean)": (),
     "purge_login_attempts()": ("skyline_worker",),
     "due_integrations(integer)": ("skyline_worker",),
     "integrations_guard_status()": (),
@@ -285,7 +368,8 @@ TABLE_GRANTS: tuple[str, ...] = (
     "GRANT INSERT (id, tenant_id, provider, name, config, status, credential_secret_id,"
     " scan_interval, created_by) ON skyline.integrations TO skyline_api",
     "GRANT UPDATE (name, config, status, status_detail, scan_interval, next_scan_at,"
-    " deleted_at, updated_at) ON skyline.integrations TO skyline_api",
+    " deleted_at, updated_at, credential_secret_id) ON skyline.integrations TO skyline_api",
+    "GRANT DELETE ON skyline.secrets TO skyline_api",
     "GRANT INSERT (id, tenant_id, kind, integration_id, payload, max_attempts)"
     " ON skyline.jobs TO skyline_api",
     "GRANT SELECT ON skyline.scan_runs TO skyline_api",
@@ -330,6 +414,7 @@ TABLE_GRANTS: tuple[str, ...] = (
     " ON skyline.users TO skyline_definer",
     "GRANT UPDATE (revoked_at) ON skyline.sessions TO skyline_definer",
     "GRANT SELECT, INSERT, DELETE ON skyline.login_attempts TO skyline_definer",
+    "GRANT UPDATE (succeeded) ON skyline.login_attempts TO skyline_definer",
 )
 
 SEQUENCE_GRANTS: tuple[tuple[str, str], ...] = (
@@ -378,6 +463,11 @@ POLICIES: tuple[tuple[str, str, str], ...] = (
         "secrets_api_credentials_only",
         "secrets",
         "AS RESTRICTIVE FOR INSERT TO skyline_api WITH CHECK (purpose = 'integration_credential')",
+    ),
+    (
+        "secrets_api_delete_credentials_only",
+        "secrets",
+        "AS RESTRICTIVE FOR DELETE TO skyline_api USING (purpose = 'integration_credential')",
     ),
     # integrations: the API can't create an already-connected integration.
     (
