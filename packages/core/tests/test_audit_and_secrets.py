@@ -122,7 +122,8 @@ async def test_oversized_details_are_truncated(db: Database, tenant: TenantFixtu
                 select(AuditLog.details).where(AuditLog.action == AuditAction.SCAN_REQUESTED.value)
             )
         ).scalar_one()
-    assert details == {"truncated": True}
+    assert details["truncated"] is True and details["keys"] == ["blob"]
+    assert len(details["sha256"]) == 64
 
 
 async def test_api_seals_worker_opens(db: Database, tenant: TenantFixture) -> None:

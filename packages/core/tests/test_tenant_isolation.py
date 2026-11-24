@@ -677,39 +677,68 @@ async def test_due_integrations_returns_ids_only(db: Database, tenant: TenantFix
 
 
 async def test_login_attempt_functions(db: Database) -> None:
-    subject = secrets.token_bytes(32)
+    account, ip = secrets.token_bytes(32), secrets.token_bytes(32)
     factory = db.factory("skyline_api")
+    begin = text("SELECT * FROM skyline.begin_login_attempt(:a, 3, :i, 100, interval '5 minutes')")
     async with system_scope(factory) as session:
-        for _ in range(3):
-            await session.execute(
-                text("SELECT skyline.record_login_attempt('account', :h, false)"), {"h": subject}
-            )
-        failures = (
-            await session.execute(
-                text(
-                    "SELECT * FROM skyline.recent_login_failures('account', :h,"
-                    " interval '5 minutes', true)"
-                ),
-                {"h": subject},
-            )
-        ).one()
-        assert failures.failures == 3
+        attempts = [(await session.execute(begin, {"a": account, "i": ip})).one() for _ in range(4)]
+    # Three reservations fit the account budget of 3; the fourth is refused with a wait.
+    assert [a.allowed for a in attempts] == [True, True, True, False]
+    assert attempts[3].retry_after >= 1 and attempts[3].attempt_ids == []
+    assert all(len(a.attempt_ids) == 2 for a in attempts[:3])  # account + IP rows
+    async with system_scope(factory) as session:
         await session.execute(
-            text("SELECT skyline.record_login_attempt('account', :h, true)"), {"h": subject}
+            text("SELECT skyline.finish_login_attempt(:ids, 'succeeded')"),
+            {"ids": attempts[0].attempt_ids},
         )
-        after_success = (
+        # A success resets the account budget.
+        assert (await session.execute(begin, {"a": account, "i": ip})).one().allowed
+        await session.execute(
+            text("SELECT skyline.finish_login_attempt(:ids, 'cancelled')"),
+            {"ids": attempts[1].attempt_ids},
+        )
+    with pytest.raises(DBAPIError, match="unknown outcome"):
+        async with system_scope(factory) as session:
+            await session.execute(
+                text("SELECT skyline.finish_login_attempt(:ids, 'bogus')"), {"ids": [1]}
+            )
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        async with system_scope(factory) as session:  # internal helper only
             await session.execute(
                 text(
                     "SELECT * FROM skyline.recent_login_failures('account', :h,"
                     " interval '5 minutes', true)"
                 ),
-                {"h": subject},
+                {"h": account},
             )
-        ).one()
-        assert after_success.failures == 0
     with pytest.raises(ProgrammingError, match="permission denied"):
         async with system_scope(factory) as session:
             await session.execute(text("DELETE FROM skyline.login_attempts"))
     async with system_scope(db.factory("skyline_worker")) as session:
         purged = (await session.execute(text("SELECT skyline.purge_login_attempts()"))).scalar()
         assert isinstance(purged, int)
+
+
+async def test_the_api_can_only_clear_an_integration_credential(
+    db: Database, tenant: TenantFixture
+) -> None:
+    from skyline_core.db.models import Integration
+
+    integration_id = uuid4()
+    async with tenant_scope(db.factory("skyline_api"), tenant.id) as session:
+        await session.execute(
+            insert(Integration).values(
+                id=integration_id,
+                tenant_id=tenant.id,
+                provider="fake",
+                name="x",
+                status="verifying",
+            )
+        )
+    with pytest.raises(ProgrammingError, match="can only be removed"):
+        async with tenant_scope(db.factory("skyline_api"), tenant.id) as session:
+            await session.execute(
+                update(Integration)
+                .where(Integration.id == integration_id)
+                .values(credential_secret_id=uuid4())
+            )

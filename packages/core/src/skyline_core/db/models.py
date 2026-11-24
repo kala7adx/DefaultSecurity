@@ -369,6 +369,12 @@ class Job(Base):
             unique=True,
             postgresql_where=text("kind = 'scan' AND status IN ('queued', 'running')"),
         ),
+        Index(
+            "uq_jobs_one_queued_verify",
+            "integration_id",
+            unique=True,
+            postgresql_where=text("kind = 'verify_integration' AND status = 'queued'"),
+        ),
         Index("ix_jobs_claimable", "run_at", postgresql_where=text("status = 'queued'")),
         Index("ix_jobs_leases", "lease_expires_at", postgresql_where=text("status = 'running'")),
         {"implicit_returning": False},  # the API role has INSERT but no SELECT on jobs

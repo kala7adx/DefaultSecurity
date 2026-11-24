@@ -467,6 +467,14 @@ def upgrade() -> None:
         schema="skyline",
         postgresql_where=sa.text("kind = 'scan' AND status IN ('queued', 'running')"),
     )
+    op.create_index(
+        "uq_jobs_one_queued_verify",
+        "jobs",
+        ["integration_id"],
+        unique=True,
+        schema="skyline",
+        postgresql_where=sa.text("kind = 'verify_integration' AND status = 'queued'"),
+    )
     op.create_table(
         "scan_runs",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -894,6 +902,12 @@ def downgrade() -> None:
         schema="skyline",
     )
     op.drop_table("scan_runs", schema="skyline")
+    op.drop_index(
+        "uq_jobs_one_queued_verify",
+        table_name="jobs",
+        schema="skyline",
+        postgresql_where=sa.text("kind = 'verify_integration' AND status = 'queued'"),
+    )
     op.drop_index(
         "uq_jobs_one_active_scan",
         table_name="jobs",

@@ -37,6 +37,8 @@ def create_engine(settings: CoreSettings, *, application_name: str) -> AsyncEngi
         max_overflow=settings.db_pool_size,
         pool_pre_ping=True,
         pool_recycle=1800,
+        # The login throttle (and every per-statement snapshot assumption) needs this.
+        isolation_level="READ COMMITTED",
         # Never put bound values (hashes, tokens, verifiers) into exception text or logs.
         hide_parameters=True,
         connect_args={
