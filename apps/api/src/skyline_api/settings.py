@@ -29,9 +29,24 @@ class ApiSettings(CoreSettings):
     #: API and web must only be reachable through that edge (network policy / security group).
     trusted_proxy_hops: int | None = Field(default=None, ge=0, le=3)
     max_body_bytes: int = Field(default=64 * 1024, ge=1024, le=1024 * 1024)
-    login_account_failures: int = Field(default=10, ge=3, le=100)  # CE v3.3: <= 10 per 5 min
+    #: Accounts: after each consecutive failure the next attempt waits twice as long as the
+    #: last (1 s, 2 s, 4 s … 256 s), up to ``login_lock_seconds``, a temporary lock that ends
+    #: on its own. Refused attempts never extend a wait. This is Cyber Essentials v3.3's
+    #: "throttling" option (no more than 10 guesses in 5 minutes; defaults allow 9). 0 turns
+    #: the waits off, leaving only the ceiling below.
+    login_first_wait_ms: int = Field(default=1000, ge=0, le=60_000)
+    login_lock_seconds: int = Field(default=300, ge=1, le=3600)
+    #: Minutes without a failed attempt after which an account's streak starts again.
+    login_streak_reset_minutes: int = Field(default=60, ge=1, le=24 * 60)
+    #: Hard ceiling per sliding window, whatever the waits: the bounds keep it within CE
+    #: v3.3 (at most 10 failures in any 5 minutes per account or known device).
+    login_account_failures: int = Field(default=10, ge=3, le=10)
     login_ip_failures: int = Field(default=100, ge=10, le=10_000)
-    login_window_minutes: int = Field(default=5, ge=1, le=60)
+    login_window_minutes: int = Field(default=5, ge=5, le=60)
+    #: A successful sign-in marks the browser as a known device of that account (signed
+    #: cookie). Its attempts get their own waits and ceiling, so an attacker holding the
+    #: account's lock can't keep the real user's devices out. 400 days is browsers' cap.
+    login_device_days: int = Field(default=90, ge=1, le=400)
     #: Concurrent password hashes (argon2 uses 64 MiB each); more get 503 + Retry-After.
     max_concurrent_hashes: int = Field(default=8, ge=1, le=64)
     max_concurrent_hashes_per_ip: int = Field(default=2, ge=1, le=64)
@@ -45,6 +60,19 @@ class ApiSettings(CoreSettings):
     @classmethod
     def _origin(cls, value: str) -> str:
         return validate_origin(value)
+
+    @model_validator(mode="after")
+    def _login_waits_are_consistent(self) -> ApiSettings:
+        if self.login_first_wait_ms > self.login_lock_seconds * 1000:
+            msg = "SKYLINE_LOGIN_FIRST_WAIT_MS must not exceed SKYLINE_LOGIN_LOCK_SECONDS"
+            raise ValueError(msg)
+        if self.login_streak_reset_minutes * 60 <= self.login_lock_seconds:
+            msg = (
+                "SKYLINE_LOGIN_STREAK_RESET_MINUTES must be longer than "
+                "SKYLINE_LOGIN_LOCK_SECONDS, or a streak would be forgotten during its lock"
+            )
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def _production_requires_explicit_proxy_hops(self) -> ApiSettings:

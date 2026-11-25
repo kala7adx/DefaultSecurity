@@ -88,7 +88,7 @@ flowchart LR
 
 | ID | STRIDE | Threat | Mitigations | Phase | Status |
 |---|---|---|---|---|---|
-| T1.1 | S | Credential stuffing / brute force on login | argon2id; Postgres-backed per-account and per-IP throttling (≤ 10 attempts / 5 min default); generic errors; audit of failures; WAF rate rule in AWS; OIDC SSO + MFA via IdP | 0, 4, 9 | Designed |
+| T1.1 | S | Credential stuffing / brute force on login | argon2id; Postgres-backed progressive throttling (waits double from 1 s to a 5-minute temporary lock) plus hard ceilings: ≤ 10 failures in any 5 min per account, and per known device (device cookies are bound to the current password) (CE v3.3), 100 per IP bucket; guesses spaced by the wait even in parallel; generic errors; audit of failures; WAF rate rule in AWS; OIDC SSO + MFA via IdP | 0, 4, 9 | Designed |
 | T1.2 | S | Session hijack / fixation | 256-bit opaque token, `__Host-` HttpOnly Secure cookie, hash at rest, new session on login, idle 30 min / absolute 12 h, revoke on logout and password change (ADR-0008) | 0 | Designed |
 | T1.3 | T | CSRF, made more likely by `SameSite=Lax` | Safe methods never change state (route test); double-submit CSRF token HMAC-bound to the session; `Origin` check; reject `Sec-Fetch-Site: cross-site` on unsafe methods; login is JSON-only (ADR-0008) | 0 | Designed |
 | T1.4 | S/I | Open redirect via `next` on deep links (phishing, E8) | Only same-origin relative paths; rejects `//`, `/\`, schemes and encoded variants; tests | 0 | Designed |
@@ -221,7 +221,7 @@ flowchart LR
 | R6 | Secure cookies over `http://localhost` in local Compose | Browsers treat localhost as secure; Compose binds to 127.0.0.1 only | — |
 | R7 | Python can't guarantee zeroing key material in memory | Best-effort `bytearray` zeroing; short-lived worker processes; no swap in containers | — |
 | R8 | Local KEK: the API process can unwrap DEKs; encrypt-only is enforced by DB grants, not cryptography (T3.6) | KMS key policy makes it cryptographic; a public-key wrap for the local provider is possible later | Phase 4 |
-| R9 | An attacker can keep a known account locked (10 bad passwords per 5 min) | Cyber Essentials requires the lockout; per-IP limits and audit rows make it visible; known-device bypass or progressive delays later | Phase 1 |
+| R9 | An attacker who knows an email can hold its account lock with one request each time the lock expires (about 12 an hour, under per-IP and WAF limits). While it lasts, sign-ins from browsers without a device cookie (a new browser, cleared cookies) are refused. The wait countdown resetting early also shows that the real user just signed in | Known devices (any browser that signed in with the current password in the last 90 days) keep their own budget and get in, and a signed-in user can still change their password (ADR-0008, 2026-11-25). Guessing is capped at 10 per 5 min per account for anyone without a device cookie; a stolen cookie adds one budget until the next password change, which revokes them all (so does rotating the session key). Audit rows make an attack visible. Still to do: an audited operator unlock for one account, an alert on sustained throttling of one subject, and a non-default bootstrap admin email before exposing a deployment | Phase 1 (unlock), Phase 4 (alert) |
 
 ## 7. Assumptions
 

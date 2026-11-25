@@ -624,9 +624,13 @@ packages/frameworks/src/skyline_frameworks/
 - **Passwords:** argon2id (argon2-cffi defaults), at least 12 characters (1,024-character cap as a
   DoS guard only), a common-password blocklist,
   and verification against a dummy hash when the user doesn't exist so timing reveals nothing.
-  Login errors are always generic. Throttling is stored in Postgres per account and per IP, so
-  it works across replicas, and returns `429` with `Retry-After`. Failures are audit-logged. The
-  bootstrap admin must change their password on first login.
+  Login errors are always generic. Throttling, not lockout, is stored in Postgres so it works
+  across replicas: each consecutive failure on an account doubles the wait before the next
+  attempt (1 s … 256 s, then a 5-minute temporary lock that expires on its own), with hard
+  sliding ceilings per account and per IP. Browsers that signed in before carry a signed
+  device cookie and get their own budget, so an attacker holding an account's lock can't
+  keep its user's devices out (ADR-0008). Refusals are `429` with `Retry-After`. Failures
+  are audit-logged. The bootstrap admin must change their password on first login.
 - **RBAC.** Deny by default: every route declares `Depends(require(Permission.X))`. A test fails
   if any route lacks a permission, except the explicit public set: `/healthz`, `/readyz`,
   `POST /api/v1/auth/login` and the onboarding registration callbacks, which use their own token
