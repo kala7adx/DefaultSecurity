@@ -6,7 +6,7 @@
 #   non-editable into /opt/venv. No compilers or package managers in the final image.
 # * Runs as an unprivileged user (uid 10001) on a read-only root filesystem (Compose / Helm).
 
-FROM ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d AS uv
+FROM ghcr.io/astral-sh/uv:0.13.10@sha256:a3ea1357342c1a4bf9a0c53a3deb1b55379aefa037338d8113d5771efa01774f AS uv
 
 FROM python:3.13-slim-bookworm@sha256:c3f3ace1c09d3d90cb79b17c6a1037282e82df75a8870929b2cbc667ddb7898e AS build
 COPY --from=uv /uv /usr/local/bin/uv
