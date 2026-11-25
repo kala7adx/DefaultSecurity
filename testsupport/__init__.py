@@ -183,6 +183,15 @@ async def add_redaction_key(db: Database, tenant: TenantFixture) -> None:
         await create_redaction_key(session, SecretSealer(TEST_KEYS), tenant_id=tenant.id)
 
 
+async def rewind_login_attempts(db: Database, seconds: float) -> None:
+    """Move every recorded login attempt back in time, as if ``seconds`` had passed."""
+    async with system_scope(db.factory("skyline_owner")) as session:
+        await session.execute(
+            text("UPDATE skyline.login_attempts SET at = at - make_interval(secs => :s)"),
+            {"s": seconds},
+        )
+
+
 async def reset_jobs(db: Database) -> None:
     """Finish leftovers from other tests so each test's worker claims only its own jobs."""
     async with system_scope(db.factory("skyline_worker")) as session:

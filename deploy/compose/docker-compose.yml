@@ -83,6 +83,8 @@ services:
     environment:
       <<: *app-env
       SKYLINE_DB_USER: skyline_owner
+      # Use your own address before exposing a deployment: a well-known admin email lets
+      # anyone hold that account's sign-in lock against new browsers (THREAT_MODEL R9).
       SKYLINE_BOOTSTRAP_ADMIN_EMAIL: admin@example.com
       SKYLINE_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/skyline/bootstrap_admin_password
     networks: [backend]

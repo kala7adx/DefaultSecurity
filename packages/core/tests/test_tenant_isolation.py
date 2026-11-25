@@ -35,7 +35,7 @@ from skyline_core.db.models import (
 from skyline_core.db.tenancy import system_scope, tenant_scope
 from skyline_core.secrets_store import store_secret
 from skyline_core.security.passwords import hash_password
-from testsupport import Database, TenantFixture
+from testsupport import Database, TenantFixture, rewind_login_attempts
 
 pytestmark = pytest.mark.db
 
@@ -676,10 +676,146 @@ async def test_due_integrations_returns_ids_only(db: Database, tenant: TenantFix
     assert all(len(r) == 2 for r in rows)
 
 
+#: begin_login_attempt with progressive waits off: only the sliding-window ceiling applies.
+_CEILING_ONLY = (
+    "SELECT * FROM skyline.begin_login_attempt(:a, 3, :i, 100, interval '5 minutes',"
+    " interval '0', interval '0', interval '15 minutes')"
+)
+#: The API defaults: waits double from 1 s to a 300 s lock; 60 quiet minutes end a streak;
+#: a hard ceiling of 10 failures per 5 minutes.
+_WAITS = (
+    "SELECT * FROM skyline.begin_login_attempt(:a, 10, NULL, NULL, interval '5 minutes',"
+    " interval '1 second', interval '300 seconds', interval '60 minutes')"
+)
+
+
+async def _try_login(db: Database, account: bytes) -> Any:
+    async with system_scope(db.factory("skyline_api")) as session:
+        return (await session.execute(text(_WAITS), {"a": account})).one()
+
+
+async def _finish(db: Database, ids: list[int], outcome: str) -> None:
+    async with system_scope(db.factory("skyline_api")) as session:
+        await session.execute(
+            text("SELECT skyline.finish_login_attempt(:ids, :o)"), {"ids": ids, "o": outcome}
+        )
+
+
+async def test_login_waits_double_up_to_a_temporary_lock(db: Database) -> None:
+    account = secrets.token_bytes(32)
+    expected = [1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300, 300]
+    for wait in expected:
+        assert (await _try_login(db, account)).allowed  # a guess, reserved as a failure
+        refused = await _try_login(db, account)
+        assert not refused.allowed and refused.attempt_ids == []
+        assert wait - 1 <= refused.retry_after <= wait
+        await rewind_login_attempts(db, wait)
+
+
+async def test_refused_attempts_never_extend_the_lock(db: Database) -> None:
+    account = secrets.token_bytes(32)
+    for wait in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
+        assert (await _try_login(db, account)).allowed
+        await rewind_login_attempts(db, wait)
+    assert (await _try_login(db, account)).allowed  # 10th failure: the 300 s lock starts
+    retries = [(await _try_login(db, account)).retry_after for _ in range(20)]
+    assert retries == sorted(retries, reverse=True) and 299 <= retries[0] <= 300
+    async with system_scope(db.factory("skyline_owner")) as session:
+        rows = await session.execute(
+            text("SELECT count(*) FROM skyline.login_attempts WHERE subject_hash = :a"),
+            {"a": account},
+        )
+        assert rows.scalar() == 10  # the 20 refusals left no trace
+    await rewind_login_attempts(db, 300)
+    assert (await _try_login(db, account)).allowed  # expired on its own
+
+
+async def test_a_quiet_period_or_a_success_ends_the_streak(db: Database) -> None:
+    account = secrets.token_bytes(32)
+    for wait in [1, 2, 4, 8]:
+        assert (await _try_login(db, account)).allowed
+        await rewind_login_attempts(db, wait)
+    assert (await _try_login(db, account)).allowed
+    assert (await _try_login(db, account)).retry_after >= 15  # 5th failure: 16 s
+    await rewind_login_attempts(db, 60 * 60 + 1)  # an hour without a failure
+    assert (await _try_login(db, account)).allowed
+    assert (await _try_login(db, account)).retry_after == 1  # a new streak
+    await rewind_login_attempts(db, 1)
+    ok = await _try_login(db, account)
+    await _finish(db, list(ok.attempt_ids), "succeeded")
+    assert (await _try_login(db, account)).allowed  # no wait after a success
+    assert (await _try_login(db, account)).retry_after == 1
+
+
+async def test_the_real_users_sign_ins_dont_reset_the_ceiling(db: Database) -> None:
+    """Each success ends the wait streak, so the attacker could guess again at once; the
+    ceiling still caps failures at 10 in 5 minutes (Cyber Essentials v3.3)."""
+    account = secrets.token_bytes(32)
+    failures = 0
+    for _ in range(15):
+        guess = await _try_login(db, account)
+        if not guess.allowed:
+            break
+        failures += 1
+        await rewind_login_attempts(db, 1)
+        user = await _try_login(db, account)  # the real user signs in in between
+        if user.allowed:
+            await _finish(db, list(user.attempt_ids), "succeeded")
+    assert failures == 10
+
+
+@pytest.mark.parametrize("window", [0, -60, None])
+async def test_the_window_must_be_positive(db: Database, window: int | None) -> None:
+    with pytest.raises(DBAPIError, match="positive limits"):
+        async with system_scope(db.factory("skyline_api")) as session:
+            await session.execute(
+                text(
+                    "SELECT * FROM skyline.begin_login_attempt(:a, 10, NULL, NULL,"
+                    " make_interval(secs => :w), interval '1 second', interval '300 seconds',"
+                    " interval '60 minutes')"
+                ),
+                {"a": secrets.token_bytes(32), "w": window},
+            )
+
+
+async def test_a_cancelled_reservation_releases_its_wait(db: Database) -> None:
+    account = secrets.token_bytes(32)
+    reserved = await _try_login(db, account)
+    assert not (await _try_login(db, account)).allowed
+    await _finish(db, list(reserved.attempt_ids), "cancelled")
+    assert (await _try_login(db, account)).allowed
+
+
+@pytest.mark.parametrize(
+    ("base", "cap", "reset"),
+    [
+        (-1, 300, 900),  # negative first wait
+        (10, 5, 900),  # cap below the first wait
+        (1, 300, 300),  # streak forgotten before the lock ends
+        (0, 0, 0),  # no streak at all
+        (1, 300, None),
+        (None, 300, 900),
+    ],
+)
+async def test_invalid_wait_settings_are_rejected(
+    db: Database, base: int | None, cap: int, reset: int | None
+) -> None:
+    with pytest.raises(DBAPIError, match="invalid wait settings"):
+        async with system_scope(db.factory("skyline_api")) as session:
+            await session.execute(
+                text(
+                    "SELECT * FROM skyline.begin_login_attempt(:a, 10, NULL, NULL,"
+                    " interval '5 minutes', make_interval(secs => :b),"
+                    " make_interval(secs => :c), make_interval(secs => :r))"
+                ),
+                {"a": secrets.token_bytes(32), "b": base, "c": cap, "r": reset},
+            )
+
+
 async def test_login_attempt_functions(db: Database) -> None:
     account, ip = secrets.token_bytes(32), secrets.token_bytes(32)
     factory = db.factory("skyline_api")
-    begin = text("SELECT * FROM skyline.begin_login_attempt(:a, 3, :i, 100, interval '5 minutes')")
+    begin = text(_CEILING_ONLY)
     async with system_scope(factory) as session:
         attempts = [(await session.execute(begin, {"a": account, "i": ip})).one() for _ in range(4)]
     # Three reservations fit the account budget of 3; the fourth is refused with a wait.
@@ -691,7 +827,7 @@ async def test_login_attempt_functions(db: Database) -> None:
             text("SELECT skyline.finish_login_attempt(:ids, 'succeeded')"),
             {"ids": attempts[0].attempt_ids},
         )
-        # A success resets the account budget.
+        # A success no longer counts as a failure (but doesn't reset the others).
         assert (await session.execute(begin, {"a": account, "i": ip})).one().allowed
         await session.execute(
             text("SELECT skyline.finish_login_attempt(:ids, 'cancelled')"),

@@ -2,7 +2,7 @@
 
 Reviewer: `security-reviewer` agent, 2026-11-24, on the uncommitted `apps/api` slice.
 Verdict: **fix before commit**. Tenant isolation, RBAC and CSRF held up.
-**Status: fixed in the working tree (table below); sent back for re-review.**
+**Status: fixed; rounds 2 and 3 below. Round 3 final check (2026-11-25): OK to commit.**
 
 ## High
 - **H1 Throttling races.** Login and change-password read the failure count, hash for about
@@ -79,7 +79,7 @@ rolls back the status update. Covered by worker M4 (enqueue in `begin_nested()`)
 | L1 | A shared `SafeText` type (no NUL or C0 controls) on every request string and query parameter. | `test_control_characters_are_rejected_not_500` |
 | L2 | Denied reads are logged, not audited. The session touch is the documented exception. | `test_denied_reads_are_not_written_to_the_audit_log` |
 | L3 | ADR-0008 amended: login CSRF is covered by Origin, Sec-Fetch-Site and JSON-only bodies. | existing Origin and JSON tests |
-| L4 | Accepted risk R9 (Cyber Essentials needs the lockout); a known-device bypass is planned for Phase 1. | — |
+| L4 | Accepted risk R9 (Cyber Essentials needs the lockout); a known-device bypass is planned for Phase 1. *Superseded 2026-11-25: see round 3.* | — |
 | L5 | `uq_jobs_one_queued_verify` and an idempotent `_enqueue_verify`. Scan cooldown: Phase 1 (real AWS). | `test_repeated_verify_requests_queue_one_job` |
 | L6 | Assets of deleted integrations are hidden. Deleting an integration removes its sealed credential (a RESTRICTIVE DELETE policy limits this to credentials). | `test_delete_integration_hides_its_findings_and_assets`, `test_deleting_an_integration_removes_its_credential` |
 | L7 | Explicit tenant predicates added everywhere listed. | existing IDOR tests |
@@ -104,3 +104,29 @@ rolls back the status update. Covered by worker M4 (enqueue in `begin_nested()`)
 | N7 (Low) purge caveats | The comment no longer claims crypto-shredding (WAL and backups keep copies until they age out). The guard trigger lets the API only clear `credential_secret_id`. | `test_the_api_can_only_clear_an_integration_credential` |
 | N8 (Low) throttled known accounts invisible to the tenant | A tenant row is written too (after the response). | — |
 | N9 (Nit) oversized audit details | Truncation keeps the top-level keys and a SHA-256 of the full details. | `test_audit_entries_are_redacted_and_tenant_scoped` |
+
+## Round 3 (lockout replaced by throttling, 2026-11-25)
+
+The owner asked to replace the lockout. Cyber Essentials v3.3 (User Access Control,
+password-based authentication, p. 21) accepts throttling where each unsuccessful attempt
+lengthens the wait, with no more than 10 guesses in 5 minutes, instead of locking. So
+`begin_login_attempt` now uses progressive waits (1 s doubling to a 5-minute temporary lock
+that expires on its own). The review of that change:
+
+| Finding | Fix | Test |
+|---|---|---|
+| M1 holding the lock got cheaper (one request per lock instead of 10 per 5 min), and the real user, even signed in, was held too | Known-device budgets: a signed cookie bound to the account gives browsers that signed in before their own subject. Password change uses the same rule. R9 rewritten: browsers without the cookie are still held. Operator unlock and alerting are planned; a non-default admin email is documented. | `test_a_known_device_is_not_held_by_an_attackers_lock`, `test_a_signed_in_user_can_change_password_while_the_account_is_locked`, `test_a_device_cookie_only_counts_for_its_own_account`, `test_device_cookies_are_checked_strictly`, `test_the_device_cookie_is_hardened` |
+| L1 a success reset the ceiling too, so guesses around the real user's sign-ins could exceed 10 in 5 min | The ceiling counts every failure in the window; only the wait streak resets on success. | `test_the_real_users_sign_ins_dont_reset_the_ceiling` |
+| L2 the long-run guess rate was understated | The streak reset default is now 60 min; ADR-0008 states the real maxima. | `test_attacker_gets_at_most_10_guesses_in_any_5_minutes` |
+| L3 "one guess in flight" overstated | Reworded: guesses are spaced by the wait however many requests arrive in parallel. | `test_account_throttle_holds_under_parallel_requests` |
+| L4 CI masked only the first line of the password | The format is checked (`^[A-Za-z0-9_-]{24}$`) before `::add-mask::`. | CI |
+| I1 reservations used `now()`, waits `clock_timestamp()` | Reservations are stamped with `clock_timestamp()`. | — |
+| I2 `p_window` not validated | NULL, zero and negative windows are rejected. | `test_the_window_must_be_positive` |
+| I3 CE compliance depended on configuration | `login_account_failures` ≤ 10 and `login_window_minutes` ≥ 5, so the ceiling alone meets CE. | settings bounds |
+| I7 Chromium downloaded from Playwright's CDN in CI | CI uses the runner's preinstalled Chrome (`SKYLINE_E2E_CHANNEL=chrome`). | CI |
+| I8 this record's L4 was stale | Marked superseded. | — |
+| Re-review M1 (Medium) device cookies outlived the password: hoarded cookies gave extra budgets after a password change | The MAC includes a fingerprint of the stored password hash, so a password change retires every earlier cookie. Unknown emails do the same work with a stand-in. The device subject includes the account. | `test_a_password_change_retires_every_earlier_device_cookie`, `test_device_cookies_are_checked_strictly` |
+| Re-review I1, I2 | Non-canonical issue times (leading zeros) are rejected. Audit rows record `via: account / device`. | `test_device_cookies_are_checked_strictly`, `test_failed_logins_on_known_accounts_reach_the_tenant_audit_log` |
+| Final check L1 (Low, predates this change) a login that read the old hash can finish after a password change and keep a session made with the old password | Phase 1: re-check `password_changed_at` (FOR SHARE) in the transaction that creates the session. | — |
+| Re-review I3–I5 | Accepted: one device cookie per browser (the last account signed in); logout keeps it, as OWASP suggests (a "forget this browser" option can come later); API replicas more than 60 s out of sync fall back to the account budget, which is safe. | — |
+| I5, I6, I9 | Accepted: audit rows for refused attempts predate this change (the WAF covers floods). Migration 0002 was edited in place before any release (reset local stacks with `down -v`). The test helper shifts every row, which is fine with serial tests. | — |

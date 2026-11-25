@@ -21,7 +21,7 @@ from skyline_api.middleware import SAFE_METHODS
 from skyline_core.db.models import AuditLog
 from skyline_core.db.tenancy import tenant_scope
 from skyline_core.settings import Environment
-from testsupport import Database
+from testsupport import Database, rewind_login_attempts
 
 pytestmark = pytest.mark.db
 
@@ -112,18 +112,68 @@ async def test_wrong_and_unknown_credentials_look_the_same(
     assert SESSION_COOKIE not in wrong.cookies
 
 
-async def test_login_is_throttled(db: Database, client: httpx.AsyncClient) -> None:
+async def _sign_in(client: httpx.AsyncClient, email: str, password: str) -> httpx.Response:
+    return await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+
+
+async def test_login_waits_grow_with_each_failure_and_the_lock_expires(
+    db: Database, client: httpx.AsyncClient
+) -> None:
     user = await make_user(db)
-    for _ in range(10):
-        response = await client.post(
-            "/api/v1/auth/login", json={"email": user.email, "password": "wrong-password!!"}
-        )
-        assert response.status_code == 401
-    throttled = await client.post(
-        "/api/v1/auth/login", json={"email": user.email, "password": user.password}
-    )
-    assert throttled.status_code == 429
-    assert 1 <= int(throttled.headers["Retry-After"]) <= 300
+    for wait in [1, 2, 4, 8, 16, 32, 64, 128, 256, 300]:
+        assert (await _sign_in(client, user.email, "wrong-password!!")).status_code == 401
+        # Even the right password waits: the lock is on the account, not the guess.
+        refused = await _sign_in(client, user.email, user.password)
+        assert refused.status_code == 429
+        assert wait - 1 <= int(refused.headers["Retry-After"]) <= wait
+        assert refused.json()["error"]["message"].startswith("Too many sign-in attempts.")
+        await rewind_login_attempts(db, wait)
+    # The 5-minute lock after the 10th failure has expired on its own.
+    assert (await _sign_in(client, user.email, user.password)).status_code == 200
+    # A success ends the streak: the next mistake waits 1 second again.
+    assert (await _sign_in(client, user.email, "wrong-password!!")).status_code == 401
+    assert (await _sign_in(client, user.email, user.password)).headers["Retry-After"] == "1"
+
+
+async def test_attacker_gets_at_most_10_guesses_in_any_5_minutes(
+    db: Database, client: httpx.AsyncClient
+) -> None:
+    """Cyber Essentials v3.3 throttling: guessing as fast as allowed for a simulated hour."""
+    user = await make_user(db)
+    clock, guesses = 0, []
+    while clock < 3600:
+        response = await _sign_in(client, user.email, "wrong-" + uuid.uuid4().hex)
+        if response.status_code == 401:
+            guesses.append(clock)
+            continue
+        assert response.status_code == 429
+        wait = int(response.headers["Retry-After"])
+        await rewind_login_attempts(db, wait)
+        clock += wait
+    busiest = max(sum(1 for g in guesses if start <= g < start + 300) for start in guesses)
+    assert busiest <= 10
+    assert len(guesses) <= 9 + 3600 // 300  # after the first 9, one guess per lock
+
+
+async def test_waits_are_the_same_for_unknown_emails(
+    db: Database, client: httpx.AsyncClient
+) -> None:
+    user = await make_user(db)
+    ghost = f"ghost-{uuid.uuid4().hex[:8]}@example.com"
+    for email in (user.email, ghost):
+        assert (await _sign_in(client, email, "wrong-password!!")).status_code == 401
+    known = await _sign_in(client, user.email, "wrong-password!!")
+    unknown = await _sign_in(client, ghost, "wrong-password!!")
+    assert known.status_code == unknown.status_code == 429
+    assert known.json()["error"]["message"] == unknown.json()["error"]["message"]
+    assert known.headers["Retry-After"] == unknown.headers["Retry-After"] == "1"
+
+
+def test_inconsistent_login_wait_settings_are_rejected(db: Database) -> None:
+    with pytest.raises(ValueError, match="LOCK_SECONDS"):
+        api_settings(db, login_first_wait_ms=60_000, login_lock_seconds=30)
+    with pytest.raises(ValueError, match="STREAK_RESET"):
+        api_settings(db, login_lock_seconds=600, login_streak_reset_minutes=10)
 
 
 @pytest.mark.parametrize(
@@ -214,6 +264,7 @@ async def test_forced_password_change(db: Database, client: httpx.AsyncClient) -
         json={"current_password": "not-my-password", "new_password": "river-lamp-orbit-71"},
     )
     assert wrong.status_code == 400
+    await rewind_login_attempts(db, 1)  # the account's 1-second wait after a wrong password
     changed = await client.post(
         "/api/v1/auth/change-password",
         json={"current_password": user.password, "new_password": "river-lamp-orbit-71"},
@@ -420,14 +471,33 @@ async def test_account_throttle_holds_under_parallel_requests(db: Database) -> N
 
     password = "wrong-" + uuid.uuid4().hex
     key = SecretStr(uuid.uuid4().hex * 2)  # one throttling key across the calls below
+    # A reservation starts the next wait at once: one guess in flight per account.
+    for wait in [1, 2, 4]:
+        burst = await _parallel_logins(
+            db, [user.email] * 30, password, "198.51.100.21", session_key=key
+        )
+        assert set(burst) <= {401, 429} and burst.count(401) == 1
+        await rewind_login_attempts(db, wait)
+
+
+async def test_account_ceiling_holds_under_parallel_requests_without_waits(
+    db: Database,
+) -> None:
+    user = await make_user(db)
+    from pydantic import SecretStr
+
+    password = "wrong-" + uuid.uuid4().hex
+    key = SecretStr(uuid.uuid4().hex * 2)
     burst = await _parallel_logins(
-        db, [user.email] * 30, password, "198.51.100.21", session_key=key
+        db, [user.email] * 30, password, "198.51.100.23", session_key=key, login_first_wait_ms=0
     )
     assert set(burst) <= {401, 429} and 1 <= burst.count(401) <= 10
-    # Topping up one by one reaches the budget exactly, never more.
+    # Topping up one by one reaches the ceiling exactly, never more.
     rest: list[int] = []
     for _ in range(16):
-        rest += await _parallel_logins(db, [user.email], password, "198.51.100.21", session_key=key)
+        rest += await _parallel_logins(
+            db, [user.email], password, "198.51.100.23", session_key=key, login_first_wait_ms=0
+        )
     assert burst.count(401) + rest.count(401) == 10
 
 
@@ -455,6 +525,20 @@ async def test_failed_logins_on_known_accounts_reach_the_tenant_audit_log(
         ).all()
     assert [r.actor_id for r in rows] == [user.tenant.admin_id]
     assert len(rows[0].details["subject"]) == 16  # an HMAC reference, never the email
+    assert rows[0].details["via"] == "account"
+    # From a known device, the row says the device's budget was used.
+    await rewind_login_attempts(db, 1)
+    assert (await _sign_in(client, user.email, user.password)).status_code == 200
+    assert (await _sign_in(client, user.email, "wrong-" + uuid.uuid4().hex)).status_code == 401
+    async with tenant_scope(db.factory("skyline_api"), user.tenant.id) as session:
+        vias = (
+            await session.execute(
+                select(AuditLog.details["via"].astext)
+                .where(AuditLog.action == "auth.login.failed")
+                .order_by(AuditLog.id)
+            )
+        ).scalars()
+        assert list(vias) == ["account", "device"]
 
 
 async def test_wrong_current_password_is_audited_in_the_tenant(

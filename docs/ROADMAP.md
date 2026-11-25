@@ -92,9 +92,11 @@ Acceptance criteria:
   - [x] all tests and CI checks pass locally; no secrets; no real cloud calls
 
 Carried into Phase 1: the entry gate above Phase 1's criteria (per-scope persistence,
-evaluation off the event loop, orphan-run sweep, vanished-scope policy), known-device login
-bypass (THREAT_MODEL R9), a scan cooldown per integration, and running the Playwright browser
-spec in CI.
+evaluation off the event loop, orphan-run sweep, vanished-scope policy), an audited operator
+unlock for a throttled account (THREAT_MODEL R9), re-checking the password when a login's
+session is created (a login racing a password change), and a scan cooldown per integration. Done
+since: login lockout replaced by progressive throttling with per-device budgets (ADR-0008,
+2026-11-25), and the Playwright browser spec runs in CI.
 
 ## Phase 1: AWS connector, onboarding, CIS AWS checks
 

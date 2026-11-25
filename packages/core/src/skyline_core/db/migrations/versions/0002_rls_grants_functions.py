@@ -132,17 +132,36 @@ FUNCTIONS: dict[str, str] = {
     # Throttling is check-and-reserve in one step (API review H1): the subject locks make the
     # count and the reservation atomic, so parallel requests can't all pass the check while
     # the password is being hashed. The reservation counts as a failure until finished.
-    "begin_login_attempt(bytea,integer,bytea,integer,interval)": f"""
+    #
+    # Accounts get progressive waits, the "throttling" option of Cyber Essentials v3.3 (User
+    # Access Control, password-based authentication: the wait between attempts increases with
+    # each unsuccessful attempt, no more than 10 guesses in 5 minutes):
+    # https://www.ncsc.gov.uk/files/cyber-essentials-requirements-for-it-infrastructure-v3-3.pdf
+    # After the n-th consecutive failure the next attempt must wait
+    # LEAST(p_wait_cap, p_wait_base * 2^(n-1)). The wait is a temporary lock that expires on its
+    # own: refused attempts are never recorded, so they can't extend it. A success, or
+    # p_streak_reset with no failure, ends the streak. The sliding-window count
+    # (p_account_limit per p_window) is a hard ceiling that successes don't reset, so even a
+    # streak cut short by the real user's sign-ins can't exceed it; IP buckets have only a
+    # ceiling. p_account is the throttling subject: the account, or a known device of it.
+    "begin_login_attempt(bytea,integer,bytea,integer,interval,interval,interval,interval)": f"""
         CREATE FUNCTION skyline.begin_login_attempt(
             p_account bytea, p_account_limit integer, p_ip bytea, p_ip_limit integer,
-            p_window interval)
+            p_window interval, p_wait_base interval, p_wait_cap interval,
+            p_streak_reset interval)
         RETURNS TABLE (allowed boolean, retry_after integer, attempt_ids bigint[])
         LANGUAGE plpgsql VOLATILE {DEFINER}
         AS $$
         DECLARE
             v_window interval := LEAST(p_window, interval '1 day');
+            v_reset interval := LEAST(p_streak_reset, interval '1 day');
             v_failures integer;
             v_oldest timestamptz;
+            v_streak integer;
+            v_last timestamptz;
+            v_until timestamptz;
+            v_refuse boolean := false;
+            v_retry integer := 1;
             v_ids bigint[] := ARRAY[]::bigint[];
             v_id bigint;
         BEGIN
@@ -151,8 +170,16 @@ FUNCTIONS: dict[str, str] = {
                 RAISE EXCEPTION 'begin_login_attempt needs READ COMMITTED' USING ERRCODE = '25001';
             END IF;
             IF p_account IS NULL OR coalesce(p_account_limit, 0) < 1
-               OR (p_ip IS NOT NULL AND coalesce(p_ip_limit, 0) < 1) THEN
+               OR (p_ip IS NOT NULL AND coalesce(p_ip_limit, 0) < 1)
+               OR p_window IS NULL OR p_window <= interval '0' THEN
                 RAISE EXCEPTION 'subjects need positive limits' USING ERRCODE = '22023';
+            END IF;
+            -- A streak must outlive the longest wait, or it would be forgotten mid-wait.
+            -- (LEAST ignores NULLs, so test the parameter itself.)
+            IF p_wait_base IS NULL OR p_wait_cap IS NULL OR p_streak_reset IS NULL
+               OR p_wait_base < interval '0' OR p_wait_cap < p_wait_base
+               OR v_reset <= p_wait_cap THEN
+                RAISE EXCEPTION 'invalid wait settings' USING ERRCODE = '22023';
             END IF;
             -- Fixed order (account, then IP) keeps concurrent callers deadlock-free.
             -- Never queue: a subject that is busy right now is told to retry in a second,
@@ -164,35 +191,74 @@ FUNCTIONS: dict[str, str] = {
                 RETURN QUERY SELECT false, 1, ARRAY[]::bigint[];
                 RETURN;
             END IF;
+            -- Ceiling: every failure within the window, successes or not.
             SELECT f.failures, f.oldest INTO v_failures, v_oldest
-              FROM skyline.recent_login_failures('account', p_account, v_window, true) f;
+              FROM skyline.recent_login_failures('account', p_account, v_window, false) f;
             IF v_failures >= p_account_limit THEN
-                RETURN QUERY SELECT false, GREATEST(1, ceil(extract(epoch FROM
-                    v_oldest + v_window - clock_timestamp()))::integer), ARRAY[]::bigint[];
-                RETURN;
+                v_refuse := true;
+                v_retry := GREATEST(v_retry, ceil(extract(epoch FROM
+                    v_oldest + v_window - clock_timestamp()))::integer);
+            END IF;
+            -- Progressive wait: the current streak is the run of failures since the last
+            -- success with no gap longer than v_reset, and it is over once v_reset has passed.
+            IF p_wait_base > interval '0' THEN
+                WITH ok AS (
+                    SELECT max(b.at) AS at FROM skyline.login_attempts b
+                     WHERE b.subject_type = 'account' AND b.subject_hash = p_account
+                       AND b.succeeded
+                ), failed AS (
+                    SELECT a.at, a.at - lag(a.at) OVER (ORDER BY a.at, a.id) AS gap
+                      FROM skyline.login_attempts a, ok
+                     WHERE a.subject_type = 'account' AND a.subject_hash = p_account
+                       AND NOT a.succeeded
+                       AND a.at > COALESCE(ok.at, '-infinity'::timestamptz)
+                       AND a.at > now() - interval '1 day'
+                ), streak AS (
+                    SELECT COALESCE(max(f.at) FILTER (WHERE f.gap > v_reset),
+                                    '-infinity'::timestamptz) AS since
+                      FROM failed f
+                )
+                SELECT count(*)::integer, max(f.at) INTO v_streak, v_last
+                  FROM failed f, streak s
+                 WHERE f.at >= s.since;
+                IF v_last > clock_timestamp() - v_reset THEN
+                    v_until := v_last + LEAST(p_wait_cap,
+                        p_wait_base * power(2, LEAST(v_streak - 1, 30)));
+                    IF v_until > clock_timestamp() THEN
+                        v_refuse := true;
+                        v_retry := GREATEST(v_retry, ceil(extract(epoch FROM
+                            v_until - clock_timestamp()))::integer);
+                    END IF;
+                END IF;
             END IF;
             IF p_ip IS NOT NULL THEN
                 SELECT f.failures, f.oldest INTO v_failures, v_oldest
                   FROM skyline.recent_login_failures('ip', p_ip, v_window, false) f;
                 IF v_failures >= p_ip_limit THEN
-                    RETURN QUERY SELECT false, GREATEST(1, ceil(extract(epoch FROM
-                        v_oldest + v_window - clock_timestamp()))::integer), ARRAY[]::bigint[];
-                    RETURN;
+                    v_refuse := true;
+                    v_retry := GREATEST(v_retry, ceil(extract(epoch FROM
+                        v_oldest + v_window - clock_timestamp()))::integer);
                 END IF;
             END IF;
-            INSERT INTO skyline.login_attempts (subject_type, subject_hash, succeeded)
-            VALUES ('account', p_account, false) RETURNING id INTO v_id;
+            IF v_refuse THEN
+                RETURN QUERY SELECT false, v_retry, ARRAY[]::bigint[];
+                RETURN;
+            END IF;
+            -- clock_timestamp(), not now(): waits are measured against the clock, and a
+            -- transaction that stalled before this point must not backdate the reservation.
+            INSERT INTO skyline.login_attempts (subject_type, subject_hash, succeeded, at)
+            VALUES ('account', p_account, false, clock_timestamp()) RETURNING id INTO v_id;
             v_ids := v_ids || v_id;
             IF p_ip IS NOT NULL THEN
-                INSERT INTO skyline.login_attempts (subject_type, subject_hash, succeeded)
-                VALUES ('ip', p_ip, false) RETURNING id INTO v_id;
+                INSERT INTO skyline.login_attempts (subject_type, subject_hash, succeeded, at)
+                VALUES ('ip', p_ip, false, clock_timestamp()) RETURNING id INTO v_id;
                 v_ids := v_ids || v_id;
             END IF;
             RETURN QUERY SELECT true, 0, v_ids;
         END
         $$
     """,
-    # 'succeeded' flips a reservation (a success resets the account budget); 'cancelled'
+    # 'succeeded' flips a reservation (a success ends the wait streak); 'cancelled'
     # drops it (the request never got to check a password); 'failed' keeps it as is. Only
     # recent rows can change.
     "finish_login_attempt(bigint[],text)": f"""
@@ -328,7 +394,9 @@ FUNCTION_GRANTS: dict[str, tuple[str, ...]] = {
     "auth_lookup_user(text)": ("skyline_api",),
     "resolve_session(bytea,interval)": ("skyline_api",),
     "change_password(bytea,text,interval)": ("skyline_api",),
-    "begin_login_attempt(bytea,integer,bytea,integer,interval)": ("skyline_api",),
+    "begin_login_attempt(bytea,integer,bytea,integer,interval,interval,interval,interval)": (
+        "skyline_api",
+    ),
     "finish_login_attempt(bigint[],text)": ("skyline_api",),
     # Internal helper of begin_login_attempt: no direct callers.
     "recent_login_failures(text,bytea,interval,boolean)": (),

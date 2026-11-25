@@ -45,10 +45,41 @@ notifications open logged-in**. Those are cross-site top-level navigations, whic
     asks.
   - Enumeration resistance: when the user doesn't exist, verify against a dummy hash so timing
     reveals nothing.
-  - Throttling: per account and per IP, stored in Postgres so it works across replicas.
-    Thresholds are configurable; the default allows at most 10 attempts per 5 minutes per account,
-    in line with Cyber Essentials v3.3's guidance. Responses are `429` with `Retry-After`, and
-    failures are audit-logged.
+  - Throttling, not lockout (amended 2026-11-25): Cyber Essentials v3.3 (User Access Control,
+    password-based authentication, p. 21) accepts "at least one of" MFA, throttling where "the
+    length of time the user must wait between attempts increases with each unsuccessful
+    attempt" with no more than 10 guesses in 5 minutes, or locking after 10 failures. Skyline
+    uses throttling, stored in Postgres so it works across replicas:
+    - **Accounts:** after each consecutive failure the next attempt waits twice as long (1 s,
+      2 s, 4 s … 256 s). From the 10th failure, each wait is a 5-minute temporary lock that ends
+      on its own. Refused attempts are never recorded, so hammering can't extend a lock. A
+      success, or 60 minutes with no failure, ends the streak. An attacker guessing as fast as
+      allowed gets 9 guesses in the first 5 minutes and then one per lock: never more than 10 in
+      any 5 minutes, and about 12 an hour sustained (bursting and pausing gets fewer).
+    - **Hard ceilings:** at most 10 failures per 5 minutes per throttling subject, counted
+      whether or not the real user signs in between (a success ends the wait streak, so
+      without this an attacker could guess again straight after each of the user's sign-ins),
+      and 100 per IP bucket. The settings can't be set looser than Cyber Essentials allows.
+    - **Known devices (OWASP device cookies):** a successful password check sets
+      `__Host-skyline_device` (HttpOnly, Secure, SameSite=Strict, 90 days): an HMAC over the
+      account's subject, a fingerprint of its current password hash, the issue time and a
+      random nonce. A browser presenting a valid cookie for the account it's signing in to is
+      throttled on its own subject (same waits and ceiling) instead of the account's. So an
+      attacker who keeps the account locked (one request per lock, about 12 an hour) can't keep
+      the real user's own browsers out, and a signed-in user can still change their password.
+    - Forged, expired or other-account cookies fall back to the account, and so does every
+      cookie issued before the last password change. Cookies collected by someone who once knew
+      the password are worthless once it changes. Each valid cookie is an extra budget of 10
+      guesses per 5 minutes, so a stolen cookie gives a second budget until the next password
+      change. Rotating the session key revokes every device cookie at once. A browser without
+      a cookie (new, or cookies cleared) is still held by the account's lock: residual risk R9.
+      Audit rows record whose budget an attempt used (`via`: account or device).
+    - **Concurrency:** each reservation starts the next wait at once, so guesses are spaced by
+      the wait however many requests arrive in parallel (several can still be hashing at once).
+    - All values are configurable (`SKYLINE_LOGIN_*`). Responses are `429` with `Retry-After`
+      and a message giving the wait, identical for unknown emails. Failures and refusals are
+      audit-logged.
+    - Source: https://www.ncsc.gov.uk/files/cyber-essentials-requirements-for-it-infrastructure-v3-3.pdf
 - **Topology:** the browser talks only to the web origin, and `/api/*` is routed to the API by a
   Next.js rewrite locally or an ALB/Ingress path rule in production. No CORS.
 - **JWTs are reserved** for future API and service tokens and for validating OIDC ID tokens
