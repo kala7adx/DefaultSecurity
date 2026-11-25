@@ -120,6 +120,28 @@ jobs:
         run: |
           uv sync --locked
           uv run python deploy/compose/smoke_test.py
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "26", cache: pnpm }
+      - name: Browser end-to-end test (Playwright, on a fresh stack)
+        # The smoke test used the one-time bootstrap password, so start again from empty
+        # volumes (the images are already built). Both passwords are masked before use; the
+        # format check first means a stray line of output can never be echoed unmasked.
+        # The runner's preinstalled Chrome is used: no browser download in CI.
+        env:
+          SKYLINE_E2E_CHANNEL: chrome
+        run: |
+          pnpm install --frozen-lockfile
+          docker compose -f deploy/compose/docker-compose.yml down -v
+          docker compose -f deploy/compose/docker-compose.yml up -d --wait
+          password="$(docker compose -f deploy/compose/docker-compose.yml run --rm --no-deps -T \
+            --entrypoint cat secrets-init /secrets/admin/bootstrap_admin_password)"
+          [[ "$password" =~ ^[A-Za-z0-9_-]{24}$ ]] || { echo "unexpected bootstrap password format" >&2; exit 1; }
+          echo "::add-mask::$password"
+          new_password="e2e-$(openssl rand -hex 24)"
+          echo "::add-mask::$new_password"
+          SKYLINE_E2E_PASSWORD="$password" SKYLINE_E2E_NEW_PASSWORD="$new_password" \
+            pnpm --dir apps/web e2e
       - name: Logs on failure
         if: failure()
         run: docker compose -f deploy/compose/docker-compose.yml logs --no-color --tail 200
